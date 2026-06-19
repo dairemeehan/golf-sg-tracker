@@ -109,6 +109,7 @@
 <nav id="nav">
   <button data-tab="play" class="active">Play</button>
   <button data-tab="summary">Summary</button>
+  <button data-tab="stats">Stats</button>
   <button data-tab="history">History</button>
   <button data-tab="data">Data</button>
   <button data-tab="help">Help</button>
@@ -497,6 +498,7 @@ function deleteProfile(id){
 function render(){
   if(tab==="play") renderPlay();
   else if(tab==="summary") renderSummary();
+  else if(tab==="stats") renderStats();
   else if(tab==="history") renderHistory();
   else if(tab==="data") renderData();
   else renderHelp();
@@ -641,8 +643,25 @@ function renderHoleEntry(isNew){
     <div class="row">
       <div><label>Penalty strokes on this shot</label>
         <select id="fpen"><option>0</option><option>1</option><option>2</option></select></div>
-      <div style="display:flex;align-items:flex-end"><button class="btn" id="addshot">Add shot →</button></div>
+      <div id="fpentypewrap" style="display:none"><label>Penalty type</label>
+        <select id="fpentype">
+          <option value="ob">Out of bounds</option>
+          <option value="water">Water</option>
+          <option value="lost">Lost ball</option>
+          <option value="unplayable">Unplayable</option>
+          <option value="other">Other</option>
+        </select></div>
     </div>
+    ${h.shots.length===0 && h.par>=4 ? `<div class="row"><div><label>Tee club</label>
+      <select id="fclub">
+        <option value="driver">Driver</option>
+        <option value="3w">3 wood</option>
+        <option value="5w">5 wood</option>
+        <option value="hybrid">Hybrid</option>
+        <option value="iron">Iron / driving iron</option>
+        <option value="other">Other</option>
+      </select></div></div>` : ``}
+    <div class="btnrow"><button class="btn" id="addshot">Add shot →</button></div>
     <div class="hint">Tip: when the ball finishes <b>on the green</b>, switch the unit to <b>ft</b> for putt distance. Greenside chips/pitches inside 30y are auto-tagged “Around Green”.</div>
     ${h.shots.length?`<div class="btnrow"><button class="btn secondary small" id="undo2">Undo last shot</button></div>`:""}
   </div>`)+`
@@ -669,6 +688,9 @@ function renderHoleEntry(isNew){
       else { distwrap.style.visibility="visible";
         funit.value = flie.value==="green"?"ft":"y"; }
     };
+    const fpen=$("#fpen"), fpentypewrap=$("#fpentypewrap");
+    const togglePenType=()=>{ fpentypewrap.style.display = (+fpen.value>0)?"block":"none"; };
+    fpen.onchange=togglePenType; togglePenType();
     $("#addshot").onclick=()=>{
       let lie=flie.value, dist=0, pen=+$("#fpen").value||0;
       if(lie!=="hole"){
@@ -678,7 +700,10 @@ function renderHoleEntry(isNew){
         if(lie==="green" && funit.value==="y") dist=dist*3;       // yards->feet
         if(lie!=="green" && funit.value==="ft") dist=dist/3;      // ft->yards
       }
-      h.shots.push({lie, dist:Math.round(dist*10)/10, penalty:pen});
+      const shot={lie, dist:Math.round(dist*10)/10, penalty:pen};
+      if(pen>0 && $("#fpentype")) shot.penType=$("#fpentype").value;
+      if($("#fclub")) shot.club=$("#fclub").value;
+      h.shots.push(shot);
       saveDraft(); renderHoleEntry();
     };
     if($("#undo2")) $("#undo2").onclick=()=>{ h.shots.pop(); saveDraft(); renderHoleEntry(); };
@@ -773,6 +798,234 @@ function focusAdvice(c){
     ARG:"Drill one reliable chip + a safe shot to your common miss; track up-and-down %. Avoid short-siding.",
     PUTT:"Hammer 6-foot makes (gate drill) and 30–50ft speed control to kill 3-putts."
   }[c];
+}
+
+/* ===================== STATS TAB ===================== */
+function holeIsComplete(h){ return h.shots && h.shots.length && h.shots[h.shots.length-1].lie==="hole"; }
+const PUTT_BANDS=[["3-5 ft",3,5],["6-10 ft",6,10],["11-20 ft",11,20],["21+ ft",21,9999]];
+
+function computeHoleStats(h){
+  if(!h.shots||!h.shots.length) return null;
+  const rows=computeHole(h);
+  const par=h.par;
+  const complete=holeIsComplete(h);
+  const score=holeStrokes(h);
+  const penalties=rows.reduce((a,r)=>a+(r.penalty||0),0);
+  const puttRows=rows.filter(r=>r.startLie==="green");
+  const putts=puttRows.length;
+  const firstPuttIdx=rows.findIndex(r=>r.startLie==="green");
+  let strokesToGreen=null, gir=false;
+  if(firstPuttIdx>=0){
+    strokesToGreen=0;
+    for(let i=0;i<firstPuttIdx;i++) strokesToGreen+=1+(rows[i].penalty||0);
+    gir = strokesToGreen <= par-2;
+  }
+  const firApp = par>=4;
+  const firHit = firApp && rows.length ? rows[0].finish.lie==="fairway" : false;
+  // driving distance (par>=4 tee shot, driver or unspecified)
+  let drive=null;
+  if(par>=4 && rows.length){
+    const f=rows[0].finish;
+    const rem = f.lie==="hole"?0 : f.lie==="green"? f.dist/3 : f.dist;
+    const d=(h.teeYds||0)-rem;
+    const club=h.shots[0].club;
+    if((club==="driver"||!club) && d>30) drive=d;
+  }
+  const prox = rows.filter(r=>r.cat==="APP" && r.finish.lie==="green").map(r=>r.finish.dist);
+  const puttAttempts = puttRows.map(r=>({dist:r.startDist, made:r.finish.lie==="hole"}));
+  const hadSand = rows.some(r=>r.startLie==="sand" && r.startDist<=50);
+  const penTypes = rows.filter(r=>r.penalty>0 && r.finish.penType).map(r=>r.finish.penType);
+  const diff=score-par;
+  return {par,score,diff,complete,penalties,putts,gir,firApp,firHit,drive,prox,
+    puttAttempts,hadSand,onePutt:putts===1,threePutt:putts>=3,penTypes,
+    sgRows:rows};
+}
+
+function aggregateStats(rnds){
+  const A={rounds:rnds.length,holes:0,par:0,score:0,
+    firApp:0,firHit:0,girHit:0,putts:0,onePutt:0,threePutt:0,penalties:0,
+    scrApp:0,scrHit:0,sandApp:0,sandHit:0,drives:[],prox:[],
+    buckets:{eagle:0,birdie:0,par:0,bogey:0,dbl:0},
+    puttBands:PUTT_BANDS.map(b=>({label:b[0],att:0,made:0})),
+    penTypes:{ob:0,water:0,lost:0,unplayable:0,other:0}};
+  rnds.forEach(r=>{
+    (r.holes||[]).forEach(h=>{
+      const s=computeHoleStats(h); if(!s) return;
+      A.holes++; A.par+=s.par; A.score+=s.score; A.putts+=s.putts; A.penalties+=s.penalties;
+      if(s.firApp){ A.firApp++; if(s.firHit) A.firHit++; }
+      if(s.gir) A.girHit++;
+      if(s.onePutt) A.onePutt++;
+      if(s.threePutt) A.threePutt++;
+      if(s.drive!=null) A.drives.push(s.drive);
+      s.prox.forEach(p=>A.prox.push(p));
+      s.puttAttempts.forEach(pa=>{
+        for(let i=0;i<PUTT_BANDS.length;i++){
+          if(pa.dist>=PUTT_BANDS[i][1] && pa.dist<=PUTT_BANDS[i][2]){
+            A.puttBands[i].att++; if(pa.made) A.puttBands[i].made++; break;
+          }
+        }
+      });
+      s.penTypes.forEach(t=>{ if(A.penTypes[t]!=null) A.penTypes[t]++; });
+      if(s.complete){
+        if(!s.gir){ A.scrApp++; if(s.diff<=0) A.scrHit++; }
+        if(s.hadSand){ A.sandApp++; if(s.diff<=0) A.sandHit++; }
+        const d=s.diff;
+        if(d<=-2) A.buckets.eagle++; else if(d===-1) A.buckets.birdie++;
+        else if(d===0) A.buckets.par++; else if(d===1) A.buckets.bogey++; else A.buckets.dbl++;
+      }
+    });
+  });
+  return A;
+}
+
+function pct(n,d){ return d? Math.round(n/d*100) : null; }
+function avg(arr){ return arr.length? arr.reduce((a,b)=>a+b,0)/arr.length : null; }
+function statCard(k,v,sub){ return `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${sub?`<div class="k" style="margin-top:2px">${sub}</div>`:""}</div>`; }
+
+function renderStats(){
+  const mine=myRounds();
+  const prof=activeProfile();
+  if(!mine.length){ main.innerHTML=`<div class="card"><h2>No data yet for ${esc(prof.name)}</h2><div class="hint">Log a round in the <b>Play</b> tab to unlock your stats dashboard.</div></div>`; return; }
+  const A=aggregateStats(mine);
+  const per18=n=>A.holes? n/A.holes*18 : 0;
+  const firPctV=pct(A.firHit,A.firApp);
+  const girPctV=pct(A.girHit,A.holes);
+  const scrPctV=pct(A.scrHit,A.scrApp);
+  const sandPctV=pct(A.sandHit,A.sandApp);
+  const avgScoreVsPar = A.holes? (A.score-A.par)/A.holes*18 : 0;
+  const drv=avg(A.drives), prox=avg(A.prox);
+  const totalPenTypes=Object.values(A.penTypes).reduce((a,b)=>a+b,0);
+
+  const gauge=(label,val,sub)=>{
+    const w=val==null?0:Math.max(0,Math.min(100,val));
+    const col=val==null?"var(--muted)":val>=60?"var(--good)":val>=40?"var(--warn)":"var(--bad)";
+    return `<div style="margin:10px 0">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+        <span>${label}</span><span style="font-variant-numeric:tabular-nums">${val==null?"—":val+"%"}${sub?` <span class="muted">${sub}</span>`:""}</span></div>
+      <div class="bar"><span style="left:0;width:${w}%;background:${col}"></span></div></div>`;
+  };
+
+  const bk=A.buckets, totB=bk.eagle+bk.birdie+bk.par+bk.bogey+bk.dbl;
+  const bkRow=(lbl,n,col)=>{ const p=totB?Math.round(n/totB*100):0;
+    return `<div style="margin:6px 0">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px">
+        <span>${lbl}</span><span class="muted">${n} · ${p}%</span></div>
+      <div class="bar"><span style="left:0;width:${p}%;background:${col}"></span></div></div>`; };
+
+  const puttRows=A.puttBands.map(b=>`<tr><td>${b.label}</td><td class="num">${b.att}</td>
+    <td class="num">${b.att?Math.round(b.made/b.att*100)+"%":"—"}</td></tr>`).join("");
+
+  main.innerHTML=`
+  <div class="card">
+    <div class="hole-head"><h2 style="margin:0">${esc(prof.name)} · key numbers</h2>
+      <span class="pill">${A.rounds} round${A.rounds>1?"s":""} · ${A.holes} holes</span></div>
+    <div class="statgrid">
+      ${statCard("Scoring avg / 18", A.holes?fmt(avgScoreVsPar,1):"—", "vs par")}
+      ${statCard("Handicap", prof.handicap!=null?prof.handicap:"—", "Target: "+(prof.target!=null?prof.target:"—"))}
+      ${statCard("Putts / 18", A.holes?per18(A.putts).toFixed(1):"—", A.threePutt+" three-putt"+(A.threePutt===1?"":"s"))}
+      ${statCard("Penalties / 18", A.holes?per18(A.penalties).toFixed(1):"—", totalPenTypes?"":"add types as you log")}
+    </div>
+    <div class="btnrow"><button class="btn secondary small" id="editgoals">Edit handicap & target</button></div>
+  </div>
+
+  <div class="card">
+    <h2>📈 Strokes-gained trend (per 18)</h2>
+    ${trendChart(mine)}
+  </div>
+
+  <div class="card">
+    <h2>🎯 Tee-to-green accuracy</h2>
+    ${gauge("Fairways in regulation", firPctV, A.firApp?`${A.firHit}/${A.firApp}`:"")}
+    ${gauge("Greens in regulation", girPctV, `${A.girHit}/${A.holes}`)}
+    ${gauge("Scrambling (par save, no GIR)", scrPctV, A.scrApp?`${A.scrHit}/${A.scrApp}`:"")}
+    ${gauge("Sand saves (greenside)", sandPctV, A.sandApp?`${A.sandHit}/${A.sandApp}`:"no bunker holes yet")}
+    <div class="statgrid" style="margin-top:12px">
+      ${statCard("Avg drive", drv!=null?Math.round(drv)+" y":"—", "driver / par 4-5")}
+      ${statCard("Approach proximity", prox!=null?Math.round(prox)+" ft":"—", "greens hit")}
+    </div>
+    <div class="hint" style="margin-top:6px">Driving uses hole length minus distance left, so it's a straight-line estimate. Tag your tee club when logging for cleaner driver numbers.</div>
+  </div>
+
+  <div class="card">
+    <h2>⛳ Putting by distance</h2>
+    <table><thead><tr><th>Distance</th><th class="num">Attempts</th><th class="num">Make %</th></tr></thead>
+      <tbody>${puttRows}</tbody></table>
+    <div class="statgrid" style="margin-top:12px">
+      ${statCard("1-putt holes", A.onePutt, pct(A.onePutt,A.holes)+"% of holes")}
+      ${statCard("3-putt holes", A.threePutt, pct(A.threePutt,A.holes)+"% of holes")}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📊 Scoring breakdown</h2>
+    ${bkRow("Eagle or better", bk.eagle, "#7fffc4")}
+    ${bkRow("Birdie", bk.birdie, "var(--good)")}
+    ${bkRow("Par", bk.par, "#7fd3ff")}
+    ${bkRow("Bogey", bk.bogey, "var(--warn)")}
+    ${bkRow("Double bogey +", bk.dbl, "var(--bad)")}
+    <div class="hint" style="margin-top:6px">Based on ${totB} completed hole${totB===1?"":"s"}. Birdies + eliminating doubles is the fastest path from 7 to scratch.</div>
+  </div>
+
+  ${totalPenTypes?`<div class="card">
+    <h2>⚠ Penalty breakdown</h2>
+    <div class="statgrid">
+      ${statCard("Out of bounds", A.penTypes.ob, "")}
+      ${statCard("Water", A.penTypes.water, "")}
+      ${statCard("Lost ball", A.penTypes.lost, "")}
+      ${statCard("Unplayable", A.penTypes.unplayable, "")}
+    </div></div>`:""}
+  `;
+
+  if($("#editgoals")) $("#editgoals").onclick=()=>editGoals(prof.id);
+}
+
+function editGoals(id){
+  const p=profiles.find(x=>x.id===id); if(!p) return;
+  const h=prompt("Current handicap (e.g. 7 or 7.4):", p.handicap!=null?p.handicap:"");
+  if(h===null) return;
+  const t=prompt("Target handicap (e.g. 0 for scratch):", p.target!=null?p.target:"");
+  if(t===null) return;
+  p.handicap = h.trim()===""?null:parseFloat(h);
+  p.target = t.trim()===""?null:parseFloat(t);
+  saveProfiles(); render();
+}
+
+/* Lightweight inline SVG line chart of SG/18 per round over time. */
+function trendChart(rnds){
+  const pts=[...rnds].filter(r=>r.holes&&r.holes.length)
+    .sort((a,b)=>(a.date||"").localeCompare(b.date||"")||a.id-b.id)
+    .map(r=>{ const t=roundTotals(r); const f=t.holes?18/t.holes:0;
+      return {total:t.total*f,OTT:t.OTT*f,APP:t.APP*f,ARG:t.ARG*f,PUTT:t.PUTT*f}; });
+  if(pts.length<2) return `<div class="hint">Log at least 2 rounds to see your trend line.</div>`;
+  const W=320,H=170,padL=34,padR=8,padT=10,padB=22;
+  const series=[
+    {key:"total",col:"#5fc882",label:"Total",wide:true},
+    {key:"OTT",col:"#7fd3ff",label:"OTT"},
+    {key:"APP",col:"#b69cff",label:"APP"},
+    {key:"ARG",col:"#ffce7f",label:"ARG"},
+    {key:"PUTT",col:"#7fffc4",label:"PUTT"},
+  ];
+  let lo=Infinity,hi=-Infinity;
+  pts.forEach(p=>series.forEach(s=>{ lo=Math.min(lo,p[s.key]); hi=Math.max(hi,p[s.key]); }));
+  if(lo===hi){ lo-=1; hi+=1; }
+  const pad=(hi-lo)*0.1; lo-=pad; hi+=pad;
+  const x=i=>padL+(W-padL-padR)*(pts.length===1?0.5:i/(pts.length-1));
+  const y=v=>padT+(H-padT-padB)*(1-(v-lo)/(hi-lo));
+  const line=(key)=>pts.map((p,i)=>(i?"L":"M")+x(i).toFixed(1)+" "+y(p[key]).toFixed(1)).join(" ");
+  const zeroY = (lo<=0&&hi>=0)? y(0) : null;
+  const grid = [hi, (hi+lo)/2, lo].map(v=>`<line x1="${padL}" y1="${y(v).toFixed(1)}" x2="${W-padR}" y2="${y(v).toFixed(1)}" stroke="#2a322c" stroke-width="1"/><text x="2" y="${(y(v)+3).toFixed(1)}" fill="#8aa094" font-size="9">${fmt(v,1)}</text>`).join("");
+  const paths=series.map(s=>`<path d="${line(s.key)}" fill="none" stroke="${s.col}" stroke-width="${s.wide?2.4:1.3}" opacity="${s.wide?1:0.85}"/>`).join("");
+  const dots=pts.map((p,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(p.total).toFixed(1)}" r="2.6" fill="#5fc882"/>`).join("");
+  const legend=series.map(s=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:12px;height:3px;background:${s.col};display:inline-block;border-radius:2px"></span>${s.label}</span>`).join("");
+  return `<div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:280px;height:auto">
+    ${grid}
+    ${zeroY!=null?`<line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W-padR}" y2="${zeroY.toFixed(1)}" stroke="#4a5750" stroke-width="1" stroke-dasharray="3 3"/>`:""}
+    ${paths}${dots}
+    <text x="${padL}" y="${H-6}" fill="#8aa094" font-size="9">oldest</text>
+    <text x="${W-padR}" y="${H-6}" fill="#8aa094" font-size="9" text-anchor="end">latest</text>
+  </svg></div>
+  <div style="margin-top:6px">${legend}</div>
+  <div class="hint" style="margin-top:4px">Each point is one round's strokes gained per 18 vs Tour. Higher = better. Watch the lines climb as you improve.</div>`;
 }
 
 /* ===================== HISTORY TAB ===================== */
@@ -945,13 +1198,16 @@ function renderProfileList(){
   el.innerHTML=profiles.map(p=>{
     const n=rounds.filter(r=>(r.profileId||1)===p.id).length;
     const active=p.id===activeProfileId;
+    const goals = (p.handicap!=null||p.target!=null)?` <span class="muted">· hcp ${p.handicap!=null?p.handicap:"—"} → ${p.target!=null?p.target:"—"}</span>`:"";
     return `<div class="shotline">
-      <span class="desc">${active?"● ":""}${esc(p.name)} <span class="muted">· ${n} round${n===1?"":"s"}</span></span>
+      <span class="desc">${active?"● ":""}${esc(p.name)} <span class="muted">· ${n} round${n===1?"":"s"}</span>${goals}</span>
       <span>
+        <button class="btn secondary small goalsprof" data-id="${p.id}">Goals</button>
         <button class="btn secondary small renameprof" data-id="${p.id}">Rename</button>
         <button class="btn danger small delprof" data-id="${p.id}"${profiles.length<=1?" disabled":""}>Delete</button>
       </span></div>`;
   }).join("");
+  el.querySelectorAll('.goalsprof').forEach(b=>b.onclick=()=>editGoals(+b.dataset.id));
   el.querySelectorAll('.renameprof').forEach(b=>b.onclick=()=>renameProfile(+b.dataset.id));
   el.querySelectorAll('.delprof').forEach(b=>b.onclick=()=>deleteProfile(+b.dataset.id));
 }
@@ -1017,6 +1273,10 @@ function renderHelp(){
         <li>Log every round the same day while you remember distances. ~8–10 rounds gives trustworthy trends.</li>
       </ul>
     </div>
+  </div>
+  <div class="card">
+    <h2>📊 The Stats tab</h2>
+    <div class="hint">Beyond strokes gained, the <b>Stats</b> tab computes traditional metrics from the same shot data: fairways & greens in regulation, scrambling, sand saves, putts per 18, 1-/3-putt rates, make % by distance, driving distance, approach proximity, scoring breakdown (birdies→doubles), penalty types, and an SG trend chart over time. Set each profile's handicap & target there to track progress to scratch.</div>
   </div>
   <div class="card">
     <h2>Reading your numbers (7 → scratch)</h2>
