@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Strokes Gained Tracker</title>
+<meta name="theme-color" content="#0f1411" />
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="SG Tracker" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="icons/icon-192.png" />
+<style>
+  :root{
+    --bg:#0f1411; --panel:#18211c; --panel2:#1f2a23; --line:#2c3a31;
+    --txt:#e8efe9; --muted:#8fa395; --accent:#3fb56b; --accent2:#2a8f52;
+    --good:#46c46f; --bad:#e0654f; --warn:#e0b34f;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px;-webkit-text-size-adjust:100%}
+  header{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,#16201a,#131a16);
+    border-bottom:1px solid var(--line);padding:12px 16px}
+  header h1{margin:0;font-size:18px;letter-spacing:.3px}
+  header .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  nav{display:flex;gap:6px;padding:8px 12px;background:var(--panel);
+    border-bottom:1px solid var(--line);position:sticky;top:53px;z-index:9;overflow-x:auto}
+  nav button{flex:0 0 auto;background:transparent;border:1px solid transparent;color:var(--muted);
+    padding:8px 12px;border-radius:999px;font-size:14px;cursor:pointer}
+  nav button.active{background:var(--accent2);color:#fff;border-color:var(--accent)}
+  main{padding:14px 16px 90px;max-width:760px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px;margin-bottom:14px}
+  .card h2{margin:0 0 10px;font-size:15px;color:var(--txt)}
+  label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
+  input,select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    padding:10px;border-radius:10px;font-size:16px}
+  .row{display:flex;gap:10px}
+  .row>div{flex:1}
+  button.btn{background:var(--accent);border:none;color:#06210f;font-weight:700;
+    padding:11px 14px;border-radius:10px;font-size:15px;cursor:pointer;width:100%}
+  button.btn.secondary{background:var(--panel2);color:var(--txt);border:1px solid var(--line);font-weight:600}
+  button.btn.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
+  button.btn.small{width:auto;padding:7px 12px;font-size:13px}
+  .btnrow{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .btnrow>*{flex:1}
+  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);
+    border-radius:999px;padding:3px 9px;font-size:12px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:12px}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .sg-pos{color:var(--good)} .sg-neg{color:var(--bad)} .sg-zero{color:var(--muted)}
+  .muted{color:var(--muted)}
+  .big{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+  .statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px}
+  .stat .k{font-size:12px;color:var(--muted)}
+  .stat .v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+  .shotline{display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--line);font-size:14px}
+  .shotline .idx{width:22px;color:var(--muted)}
+  .shotline .desc{flex:1}
+  .shotline .sg{width:60px;text-align:right;font-variant-numeric:tabular-nums}
+  .hole-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .bar{height:8px;background:var(--panel2);border-radius:6px;overflow:hidden;position:relative}
+  .bar>span{position:absolute;top:0;bottom:0}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.4}
+  details{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:8px;background:var(--panel2)}
+  summary{cursor:pointer;font-size:14px}
+  .tag{font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--line);color:var(--muted)}
+  .tag.ott{color:#7fd3ff;border-color:#2f5a73}
+  .tag.app{color:#b69cff;border-color:#4a3f73}
+  .tag.arg{color:#ffce7f;border-color:#735c2f}
+  .tag.putt{color:#7fffc4;border-color:#2f7355}
+  .center{text-align:center}
+  .footnote{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5}
+  .cloudbadge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid var(--line);vertical-align:middle;margin-left:6px;white-space:nowrap}
+  .cloudbadge.off{color:var(--muted)}
+  .cloudbadge.on{color:var(--good);border-color:#2f7355}
+  .cloudbadge.saving{color:var(--warn);border-color:#735c2f}
+  .cloudbadge.reconnect{color:#7fd3ff;border-color:#2f5a73}
+  .cloudbadge.error{color:var(--bad);border-color:var(--bad)}
+  .installbtn{position:absolute;top:12px;right:14px;background:var(--accent);color:#06210f;
+    border:none;font-weight:700;padding:7px 12px;border-radius:999px;font-size:13px;cursor:pointer}
+  header{position:sticky}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>⛳ Strokes Gained Tracker <span id="cloudBadge" class="cloudbadge off" title="Cloud file sync status">● local only</span></h1>
+  <div class="sub">Manual entry · auto-syncs to a cloud file you choose</div>
+  <button id="installBtn" class="installbtn" style="display:none">⬇ Install app</button>
+</header>
+<nav id="nav">
+  <button data-tab="play" class="active">Play</button>
+  <button data-tab="summary">Summary</button>
+  <button data-tab="history">History</button>
+  <button data-tab="data">Data</button>
+  <button data-tab="help">Help</button>
+</nav>
+<main id="main"></main>
+
+<script>
+"use strict";
+/* ============================================================
+   STROKES GAINED BENCHMARK TABLES (PGA Tour baseline)
+   Source: Mark Broadie, "Every Shot Counts" (widely reproduced).
+   Off-green distances in YARDS. Putting distances in FEET.
+   Linear interpolation between points; flat extrapolation at ends.
+   Editable & resettable from the Data tab.
+   ============================================================ */
+const DEFAULT_BENCH = {
+  // distance(yds): [tee, fairway, rough, sand, recovery]
+  offGreen: {
+    cols:["tee","fairway","rough","sand","recovery"],
+    rows:{
+      10:[null,2.18,2.34,2.43,3.45],
+      20:[null,2.40,2.59,2.53,3.45],
+      30:[null,2.52,2.70,2.66,3.45],
+      40:[null,2.60,2.78,2.82,3.45],
+      50:[null,2.66,2.87,2.92,3.45],
+      60:[null,2.70,2.91,3.15,3.45],
+      80:[null,2.75,2.96,3.21,3.45],
+      100:[2.92,2.80,2.92,3.21,3.45],
+      120:[2.96,2.85,2.99,3.28,3.45],
+      140:[2.93,2.91,3.05,3.33,3.45],
+      160:[2.97,2.98,3.12,3.38,3.45],
+      180:[3.02,3.08,3.21,3.44,3.45],
+      200:[3.08,3.19,3.31,3.50,3.55],
+      220:[3.15,3.30,3.42,3.59,3.66],
+      240:[3.23,3.40,3.51,3.66,3.77],
+      260:[3.32,3.51,3.61,3.74,3.83],
+      280:[3.42,3.62,3.71,3.83,3.93],
+      300:[3.51,3.73,3.80,3.92,4.02],
+      320:[3.61,3.84,3.89,4.01,4.11],
+      340:[3.71,3.95,3.98,4.10,4.20]
+    }
+  },
+  // putting distance(feet): strokes
+  putt:{
+    1:1.001,2:1.009,3:1.053,4:1.147,5:1.234,6:1.323,7:1.395,8:1.456,
+    9:1.516,10:1.563,12:1.653,15:1.744,18:1.815,20:1.858,25:1.951,
+    30:2.012,35:2.061,40:2.092,45:2.123,50:2.150,60:2.225,70:2.290,
+    90:2.400
+  }
+};
+
+/* ===================== STATE & STORAGE ===================== */
+const LS_ROUNDS="sg_rounds_v1", LS_BENCH="sg_bench_v1", LS_DRAFT="sg_draft_v1";
+let bench = loadBench();
+let rounds = loadRounds();
+let draft = loadDraft();   // in-progress round
+let tab = "play";
+
+function loadRounds(){ try{return JSON.parse(localStorage.getItem(LS_ROUNDS))||[]}catch(e){return[]} }
+function saveRoundsLocal(){ localStorage.setItem(LS_ROUNDS, JSON.stringify(rounds)); }
+function saveRounds(){ saveRoundsLocal(); cloudPush(); }
+function loadBench(){ try{const b=JSON.parse(localStorage.getItem(LS_BENCH)); return b||clone(DEFAULT_BENCH)}catch(e){return clone(DEFAULT_BENCH)} }
+function saveBenchLocal(){ localStorage.setItem(LS_BENCH, JSON.stringify(bench)); }
+function saveBench(){ saveBenchLocal(); cloudPush(); }
+function loadDraft(){ try{return JSON.parse(localStorage.getItem(LS_DRAFT))||null}catch(e){return null} }
+function saveDraft(){ draft?localStorage.setItem(LS_DRAFT,JSON.stringify(draft)):localStorage.removeItem(LS_DRAFT); }
+function clone(o){return JSON.parse(JSON.stringify(o));}
+
+/* ===================== CLOUD FILE SYNC =====================
+   Uses the File System Access API (Chrome/Edge desktop). You pick ONE
+   .json file inside your OneDrive/Dropbox/Google Drive folder; the app
+   then writes to it automatically on every change. Your cloud client
+   syncs the file; other devices point at the same synced file.
+   Handle is persisted in IndexedDB so it reconnects between sessions.
+   ============================================================ */
+const fsSupported = ('showSaveFilePicker' in window);
+let cloudHandle=null, cloudStatus="off", cloudName="", cloudTimer=null;
+
+// --- tiny IndexedDB helpers (to persist the file handle) ---
+const IDB_NAME="sg_fs", IDB_STORE="handles";
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(IDB_NAME,1);
+  r.onupgradeneeded=()=>r.result.createObjectStore(IDB_STORE);
+  r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbSet(k,v){ const db=await idb(); return new Promise((res,rej)=>{
+  const t=db.transaction(IDB_STORE,"readwrite"); t.objectStore(IDB_STORE).put(v,k);
+  t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+async function idbGet(k){ const db=await idb(); return new Promise((res,rej)=>{
+  const t=db.transaction(IDB_STORE,"readonly"); const rq=t.objectStore(IDB_STORE).get(k);
+  rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }); }
+async function idbDel(k){ const db=await idb(); return new Promise((res,rej)=>{
+  const t=db.transaction(IDB_STORE,"readwrite"); t.objectStore(IDB_STORE).delete(k);
+  t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+
+function setCloud(status){ cloudStatus=status; updateCloudBadge(); }
+function updateCloudBadge(){
+  const el=document.getElementById("cloudBadge"); if(!el) return;
+  const map={ off:["off","● local only"], on:["on","☁ synced"+(cloudName?" · "+cloudName:"")],
+    saving:["saving","☁ saving…"], reconnect:["reconnect","☁ tap to reconnect"], error:["error","☁ sync error"] };
+  const [cls,txt]=map[cloudStatus]||map.off;
+  el.className="cloudbadge "+cls; el.textContent=txt;
+  el.onclick = (cloudStatus==="reconnect")? cloudReconnect : null;
+  el.style.cursor = (cloudStatus==="reconnect")?"pointer":"default";
+}
+async function ensurePerm(h,mode="readwrite"){
+  const opts={mode};
+  if((await h.queryPermission(opts))==="granted") return true;
+  if((await h.requestPermission(opts))==="granted") return true;
+  return false;
+}
+// Union-merge rounds by id (keeps the version with more holes on conflict)
+function mergeRounds(a,b){
+  const map=new Map();
+  [...(a||[]),...(b||[])].forEach(r=>{ if(!r||r.id==null) return; const ex=map.get(r.id);
+    if(!ex || (r.holes?.length||0)>(ex.holes?.length||0)) map.set(r.id,r); });
+  return [...map.values()].sort((x,y)=>x.id-y.id);
+}
+async function cloudConnect(){
+  if(!fsSupported){ alert("Direct file writing needs Chrome or Edge on desktop. On other browsers use manual Export/Import below."); return; }
+  try{
+    const h=await window.showSaveFilePicker({
+      suggestedName:"sg-tracker-data.json",
+      types:[{description:"JSON",accept:{"application/json":[".json"]}}]
+    });
+    cloudHandle=h; cloudName=h.name; await idbSet("handle",h);
+    await cloudPull(true);     // fold in anything already in the file
+    await cloudWriteNow();     // write merged result back
+    setCloud("on"); renderData();
+  }catch(e){ if(e.name!=="AbortError") alert("Couldn't connect file: "+e.message); }
+}
+async function cloudReconnect(){
+  if(!cloudHandle){ const h=await idbGet("handle"); if(!h) return cloudConnect(); cloudHandle=h; cloudName=h.name; }
+  if(await ensurePerm(cloudHandle)){ setCloud("on"); await cloudPull(true); await cloudWriteNow(); render(); }
+  else setCloud("reconnect");
+}
+async function cloudDisconnect(){ cloudHandle=null; cloudName=""; await idbDel("handle"); setCloud("off"); renderData(); }
+async function cloudWriteNow(){
+  if(!cloudHandle) return false;
+  if(!(await ensurePerm(cloudHandle))){ setCloud("reconnect"); return false; }
+  const w=await cloudHandle.createWritable();
+  await w.write(JSON.stringify({rounds,bench,savedAt:new Date().toISOString()},null,2));
+  await w.close(); setCloud("on"); return true;
+}
+function cloudPush(){
+  if(!cloudHandle) return;
+  clearTimeout(cloudTimer); setCloud("saving");
+  cloudTimer=setTimeout(()=>{ cloudWriteNow().catch(()=>setCloud("error")); }, 800);
+}
+async function cloudPull(silent){
+  if(!cloudHandle) return false;
+  if(!(await ensurePerm(cloudHandle))){ setCloud("reconnect"); return false; }
+  try{
+    const f=await cloudHandle.getFile(); const txt=await f.text();
+    if(txt.trim()){ const d=JSON.parse(txt);
+      if(Array.isArray(d.rounds)){ rounds=mergeRounds(rounds,d.rounds); saveRoundsLocal(); }
+      if(d.bench && JSON.stringify(bench)===JSON.stringify(DEFAULT_BENCH)){ bench=d.bench; saveBenchLocal(); }
+    }
+    if(!silent) render();
+    return true;
+  }catch(e){ return false; } // empty/new file is fine
+}
+async function cloudInit(){
+  if(!fsSupported) return;
+  try{
+    const h=await idbGet("handle"); if(!h) return;
+    cloudHandle=h; cloudName=h.name;
+    const p=await h.queryPermission({mode:"readwrite"});
+    if(p==="granted"){ setCloud("on"); await cloudPull(false); }
+    else setCloud("reconnect");
+  }catch(e){}
+}
+
+/* ===================== BENCHMARK LOOKUP ===================== */
+// Expected strokes to hole out from a given lie/distance.
+function expected(lie, dist){
+  if(dist<=0) return 0;
+  if(lie==="green") return interpPutt(dist);          // dist in feet
+  if(lie==="penalty") return 0;                        // not used directly
+  const col = bench.offGreen.cols.indexOf(lie);
+  if(col<0) return interpOff("fairway", dist);
+  // some lies (tee) lack short-range values -> fall back to fairway
+  let v = interpOffCol(col, dist);
+  if(v==null) v = interpOff("fairway", dist);
+  return v;
+}
+function sortedKeys(obj){ return Object.keys(obj).map(Number).sort((a,b)=>a-b); }
+function interpPutt(ft){
+  const ks=sortedKeys(bench.putt);
+  if(ft<=ks[0]) return bench.putt[ks[0]];
+  if(ft>=ks[ks.length-1]) return bench.putt[ks[ks.length-1]];
+  for(let i=0;i<ks.length-1;i++){
+    if(ft>=ks[i]&&ft<=ks[i+1]){
+      return lerp(ks[i],bench.putt[ks[i]],ks[i+1],bench.putt[ks[i+1]],ft);
+    }
+  }
+  return bench.putt[ks[ks.length-1]];
+}
+function interpOff(lie,dist){ return interpOffCol(bench.offGreen.cols.indexOf(lie),dist); }
+function interpOffCol(col,dist){
+  const rows=bench.offGreen.rows;
+  const ks=sortedKeys(rows).filter(k=>rows[k][col]!=null);
+  if(ks.length===0) return null;
+  if(dist<=ks[0]) return rows[ks[0]][col];
+  if(dist>=ks[ks.length-1]) return rows[ks[ks.length-1]][col];
+  for(let i=0;i<ks.length-1;i++){
+    if(dist>=ks[i]&&dist<=ks[i+1]){
+      return lerp(ks[i],rows[ks[i]][col],ks[i+1],rows[ks[i+1]][col],dist);
+    }
+  }
+  return rows[ks[ks.length-1]][col];
+}
+function lerp(x0,y0,x1,y1,x){ return y0+(y1-y0)*(x-x0)/(x1-x0); }
+
+/* ===================== SG CALCULATION ===================== */
+// A shot stores the FINISH state (where the ball came to rest):
+//   {lie, dist, penalty}  -- dist in yards (off green) or feet (green); holed => lie:"hole"
+// The START of shot 1 is the tee. Start of shot n = finish of shot n-1.
+function categorize(par, startLie, startDistYds){
+  if(startLie==="tee" && par>=4) return "OTT";
+  if(startLie==="green") return "PUTT";
+  if(startLie!=="green" && startDistYds!=null && startDistYds<=30) return "ARG";
+  return "APP"; // approach incl. par-3 tee shots & all long shots
+}
+// Convert a finish state into expected-strokes-before-NEXT-shot.
+function stateExpected(state){
+  if(state.lie==="hole") return 0;
+  return expected(state.lie, state.dist);
+}
+function computeHole(hole){
+  // build ordered states: start states for each shot
+  const shots=hole.shots; // each = finish state
+  const out=[];
+  let startLie="tee", startDist=hole.teeYds, startUnit="yds";
+  for(let i=0;i<shots.length;i++){
+    const finish=shots[i];
+    const eBefore = (startLie==="green")?interpPutt(startDist):expected(startLie,startDist);
+    const eAfter  = stateExpected(finish);
+    const pen = finish.penalty||0;
+    const sg = eBefore - eAfter - 1 - pen;
+    const startDistYds = startLie==="green"? (startDist/3) : startDist;
+    const cat = categorize(hole.par, startLie, startLie==="green"?0:startDist);
+    out.push({
+      idx:i+1, startLie, startDist, startUnit,
+      finish, penalty:pen, eBefore, eAfter, sg, cat
+    });
+    // next start = this finish
+    startLie=finish.lie; startDist=finish.dist;
+    startUnit = finish.lie==="green"?"ft":"yds";
+  }
+  return out;
+}
+function holeStrokes(hole){
+  let s=hole.shots.length;
+  for(const sh of hole.shots) s+=(sh.penalty||0);
+  return s;
+}
+function roundTotals(round){
+  const tot={OTT:0,APP:0,ARG:0,PUTT:0,total:0,strokes:0,par:0,holes:0};
+  for(const h of round.holes){
+    if(!h.shots||h.shots.length===0) continue;
+    const rows=computeHole(h);
+    for(const r of rows){ tot[r.cat]+=r.sg; tot.total+=r.sg; }
+    tot.strokes+=holeStrokes(h); tot.par+=h.par; tot.holes++;
+  }
+  return tot;
+}
+
+/* ===================== RENDER HELPERS ===================== */
+const $=(s,el=document)=>el.querySelector(s);
+const main=$("#main");
+function sgClass(v){ return v>0.04?"sg-pos":v<-0.04?"sg-neg":"sg-zero"; }
+function fmt(v,d=2){ return (v>=0?"+":"")+v.toFixed(d); }
+const LIE_LABEL={tee:"Tee",fairway:"Fairway",rough:"Rough",sand:"Sand",recovery:"Recovery",green:"Green",hole:"Holed"};
+const CAT_LABEL={OTT:"Off the Tee",APP:"Approach",ARG:"Around Green",PUTT:"Putting"};
+const CAT_TAG={OTT:"ott",APP:"app",ARG:"arg",PUTT:"putt"};
+
+/* ===================== TABS ===================== */
+document.querySelectorAll("#nav button").forEach(b=>{
+  b.onclick=()=>{ tab=b.dataset.tab; document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("active",x===b)); render(); };
+});
+
+function render(){
+  if(tab==="play") renderPlay();
+  else if(tab==="summary") renderSummary();
+  else if(tab==="history") renderHistory();
+  else if(tab==="data") renderData();
+  else renderHelp();
+  window.scrollTo(0,0);
+}
+
+/* ===================== PLAY TAB ===================== */
+function newDraft(){
+  draft={ id:Date.now(), date:new Date().toISOString().slice(0,10), course:"", holes:[], curHole:null };
+  saveDraft();
+}
+function renderPlay(){
+  if(!draft){
+    main.innerHTML=`
+    <div class="card">
+      <h2>Start a round</h2>
+      <div class="hint">Log each shot by recording <b>where it finished</b>. The app figures out strokes gained from there.</div>
+      <div class="btnrow"><button class="btn" id="start">＋ New round</button></div>
+    </div>`+resumeHistoryHint();
+    $("#start").onclick=()=>{ newDraft(); startHolePrompt(); };
+    return;
+  }
+  if(draft.curHole){ renderHoleEntry(); return; }
+  // round overview / between holes
+  const t=roundTotals({holes:draft.holes});
+  let holesHtml = draft.holes.map((h,i)=>{
+    const str=holeStrokes(h), sg=computeHole(h).reduce((a,r)=>a+r.sg,0);
+    return `<tr><td>${i+1}</td><td class="num">${h.par}</td><td class="num">${str}</td>
+      <td class="num ${sgClass(sg)}">${fmt(sg)}</td></tr>`;
+  }).join("");
+  main.innerHTML=`
+  <div class="card">
+    <div class="hole-head">
+      <h2 style="margin:0">Round · ${draft.date}</h2>
+      <span class="pill">${draft.holes.length} holes logged</span>
+    </div>
+    <div class="row">
+      <div><label>Date</label><input id="rdate" type="date" value="${draft.date}"></div>
+      <div><label>Course</label><input id="rcourse" value="${esc(draft.course)}" placeholder="Course name"></div>
+    </div>
+    ${draft.holes.length?`<table style="margin-top:12px"><thead><tr><th>Hole</th><th class="num">Par</th><th class="num">Score</th><th class="num">SG</th></tr></thead><tbody>${holesHtml}
+      <tr><td><b>Tot</b></td><td class="num">${t.par}</td><td class="num">${t.strokes}</td><td class="num ${sgClass(t.total)}">${fmt(t.total)}</td></tr>
+      </tbody></table>`:`<div class="hint" style="margin-top:10px">No holes yet.</div>`}
+    <div class="btnrow">
+      <button class="btn" id="addhole">＋ Add hole</button>
+      <button class="btn secondary" id="finish">Finish & save</button>
+    </div>
+    <div class="btnrow"><button class="btn danger small" id="discard">Discard round</button></div>
+  </div>`;
+  $("#rdate").onchange=e=>{draft.date=e.target.value;saveDraft();};
+  $("#rcourse").oninput=e=>{draft.course=e.target.value;saveDraft();};
+  $("#addhole").onclick=startHolePrompt;
+  $("#finish").onclick=finishRound;
+  $("#discard").onclick=()=>{ if(confirm("Discard this round?")){draft=null;saveDraft();render();} };
+}
+function startHolePrompt(){
+  const par = draft.holes.length? draft.holes[draft.holes.length-1].par : 4;
+  draft.curHole={ par:4, teeYds:400, shots:[] };
+  // sensible default tee distance by par
+  saveDraft(); renderHoleEntry(true);
+}
+function renderHoleEntry(isNew){
+  const h=draft.curHole;
+  const rows=computeHole(h);
+  const num=draft.holes.length+1;
+  let shotsHtml = rows.map(r=>{
+    const fin=r.finish;
+    const finTxt = fin.lie==="hole"?"Holed":
+      `${LIE_LABEL[fin.lie]} · ${fin.lie==="green"?fin.dist+"ft":fin.dist+"y"}`;
+    const startTxt = `${LIE_LABEL[r.startLie]} ${r.startLie==="green"?Math.round(r.startDist)+"ft":Math.round(r.startDist)+"y"}`;
+    return `<div class="shotline">
+      <span class="idx">${r.idx}</span>
+      <span class="desc"><span class="tag ${CAT_TAG[r.cat]}">${r.cat}</span> ${startTxt} → ${finTxt}${r.penalty?` <span class="tag" style="color:var(--bad);border-color:var(--bad)">+${r.penalty} pen</span>`:""}</span>
+      <span class="sg ${sgClass(r.sg)}">${fmt(r.sg)}</span>
+    </div>`;
+  }).join("");
+  const done = h.shots.length && h.shots[h.shots.length-1].lie==="hole";
+  // determine current start state for next shot
+  let curLie="tee", curDist=h.teeYds, curUnit="y";
+  if(h.shots.length){ const f=h.shots[h.shots.length-1]; curLie=f.lie; curDist=f.dist; curUnit=f.lie==="green"?"ft":"y"; }
+
+  main.innerHTML=`
+  <div class="card">
+    <div class="hole-head"><h2 style="margin:0">Hole ${num}</h2>
+      <span class="pill">Score so far: ${holeStrokes(h)}</span></div>
+    <div class="row">
+      <div><label>Par</label>
+        <select id="par">${[3,4,5,6].map(p=>`<option ${p===h.par?"selected":""}>${p}</option>`).join("")}</select></div>
+      <div><label>Tee shot length (yds)</label><input id="tee" type="number" value="${h.teeYds}"></div>
+    </div>
+    <div class="hint">Hole length = straight distance from tee to pin. Used as the start of shot 1.</div>
+    ${h.shots.length?`<div style="margin-top:10px">${shotsHtml}</div>`:`<div class="hint" style="margin-top:10px">No shots yet — add the result of your tee shot below.</div>`}
+  </div>`+ (done? `
+  <div class="card center">
+    <div class="muted">Hole complete</div>
+    <div class="big ${sgClass(rows.reduce((a,r)=>a+r.sg,0))}">${fmt(rows.reduce((a,r)=>a+r.sg,0))} SG</div>
+    <div class="btnrow"><button class="btn" id="savehole">Save hole ✓</button>
+      <button class="btn secondary" id="undo">Undo last shot</button></div>
+  </div>`:`
+  <div class="card">
+    <h2>Shot ${h.shots.length+1} — where did it finish?</h2>
+    <div class="muted" style="font-size:13px;margin-bottom:6px">Playing from: <b>${LIE_LABEL[curLie]} ${Math.round(curDist)}${curUnit}</b></div>
+    <div class="row">
+      <div><label>Finish lie</label>
+        <select id="flie">
+          <option value="fairway">Fairway</option>
+          <option value="rough">Rough</option>
+          <option value="sand">Sand</option>
+          <option value="recovery">Recovery / trees</option>
+          <option value="green">Green</option>
+          <option value="hole">In the hole</option>
+        </select></div>
+      <div id="distwrap"><label>Distance to pin</label>
+        <div class="row">
+          <input id="fdist" type="number" placeholder="0" style="flex:2">
+          <select id="funit" style="flex:1"><option value="y">yds</option><option value="ft">ft</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div><label>Penalty strokes on this shot</label>
+        <select id="fpen"><option>0</option><option>1</option><option>2</option></select></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn" id="addshot">Add shot →</button></div>
+    </div>
+    <div class="hint">Tip: when the ball finishes <b>on the green</b>, switch the unit to <b>ft</b> for putt distance. Greenside chips/pitches inside 30y are auto-tagged “Around Green”.</div>
+    ${h.shots.length?`<div class="btnrow"><button class="btn secondary small" id="undo2">Undo last shot</button></div>`:""}
+  </div>`)+`
+  <div class="card"><div class="btnrow">
+    <button class="btn secondary" id="back">‹ Round overview</button>
+    <button class="btn danger" id="delhole">Delete hole</button>
+  </div></div>`;
+
+  $("#par").onchange=e=>{h.par=+e.target.value;saveDraft();renderHoleEntry();};
+  $("#tee").onchange=e=>{h.teeYds=+e.target.value||0;saveDraft();renderHoleEntry();};
+  $("#back").onclick=()=>{ // stash hole if it has shots
+    commitCurHoleIfAny(false); draft.curHole=null; saveDraft(); render(); };
+  $("#delhole").onclick=()=>{ if(confirm("Delete this hole?")){draft.curHole=null;saveDraft();render();} };
+
+  if(done){
+    $("#savehole").onclick=()=>{ commitCurHoleIfAny(true); draft.curHole=null; saveDraft();
+      if(draft.holes.length<18) startHolePrompt(); else render(); };
+    $("#undo").onclick=()=>{ h.shots.pop(); saveDraft(); renderHoleEntry(); };
+  } else {
+    // green auto-switch
+    const flie=$("#flie"), funit=$("#funit"), fdist=$("#fdist"), distwrap=$("#distwrap");
+    flie.onchange=()=>{
+      if(flie.value==="hole"){ distwrap.style.visibility="hidden"; }
+      else { distwrap.style.visibility="visible";
+        funit.value = flie.value==="green"?"ft":"y"; }
+    };
+    $("#addshot").onclick=()=>{
+      let lie=flie.value, dist=0, pen=+$("#fpen").value||0;
+      if(lie!=="hole"){
+        dist=parseFloat(fdist.value);
+        if(isNaN(dist)||dist<0){ alert("Enter a valid distance."); return; }
+        // store green in feet, others in yards
+        if(lie==="green" && funit.value==="y") dist=dist*3;       // yards->feet
+        if(lie!=="green" && funit.value==="ft") dist=dist/3;      // ft->yards
+      }
+      h.shots.push({lie, dist:Math.round(dist*10)/10, penalty:pen});
+      saveDraft(); renderHoleEntry();
+    };
+    if($("#undo2")) $("#undo2").onclick=()=>{ h.shots.pop(); saveDraft(); renderHoleEntry(); };
+  }
+}
+function commitCurHoleIfAny(){
+  const h=draft.curHole;
+  if(h && h.shots && h.shots.length){ draft.holes.push(clone(h)); }
+}
+function finishRound(){
+  if(!draft.holes.length){ alert("Add at least one hole first."); return; }
+  draft.course=$("#rcourse")?.value||draft.course;
+  const r={ id:draft.id, date:draft.date, course:draft.course, holes:draft.holes };
+  rounds.push(r); saveRounds();
+  draft=null; saveDraft();
+  tab="summary"; document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab==="summary"));
+  render();
+}
+function resumeHistoryHint(){
+  if(!rounds.length) return "";
+  return `<div class="card"><h2>Recent</h2>${rounds.slice(-3).reverse().map(r=>{
+    const t=roundTotals(r);
+    return `<div class="shotline"><span class="desc">${r.date} · ${esc(r.course||"—")}</span>
+      <span class="sg ${sgClass(t.total)}">${fmt(t.total)}</span></div>`;}).join("")}</div>`;
+}
+
+/* ===================== SUMMARY TAB ===================== */
+function renderSummary(){
+  if(!rounds.length){ main.innerHTML=`<div class="card"><h2>No data yet</h2><div class="hint">Log a round in the <b>Play</b> tab to see your strokes-gained breakdown.</div></div>`; return; }
+  // aggregate over all rounds, per 18-hole normalized? Show per-round average.
+  const agg={OTT:0,APP:0,ARG:0,PUTT:0,total:0,holes:0,strokes:0,par:0};
+  rounds.forEach(r=>{ const t=roundTotals(r);
+    ["OTT","APP","ARG","PUTT","total"].forEach(k=>agg[k]+=t[k]);
+    agg.holes+=t.holes; agg.strokes+=t.strokes; agg.par+=t.par; });
+  const per18=h=>agg.holes? (h/agg.holes*18):0;
+  const cats=["OTT","APP","ARG","PUTT"];
+  const vals=cats.map(c=>per18(agg[c]));
+  const maxAbs=Math.max(0.5,...vals.map(v=>Math.abs(v)));
+  const weakest=cats[vals.indexOf(Math.min(...vals))];
+
+  main.innerHTML=`
+  <div class="card">
+    <h2>Strokes gained vs PGA Tour <span class="muted" style="font-weight:400">(per 18, avg of ${rounds.length} round${rounds.length>1?"s":""})</span></h2>
+    <div class="statgrid">
+      <div class="stat"><div class="k">Total SG / 18</div><div class="v ${sgClass(per18(agg.total))}">${fmt(per18(agg.total))}</div></div>
+      <div class="stat"><div class="k">Avg score vs par</div><div class="v">${agg.holes?fmt((agg.strokes-agg.par)/agg.holes*18,1):"—"}</div></div>
+    </div>
+    <div style="margin-top:14px">
+      ${cats.map(c=>{
+        const v=per18(agg[c]); const w=Math.abs(v)/maxAbs*50;
+        const left=v>=0?50:50-w; const col=v>=0?"var(--good)":"var(--bad)";
+        return `<div style="margin:10px 0">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+            <span><span class="tag ${CAT_TAG[c]}">${c}</span> ${CAT_LABEL[c]}</span>
+            <span class="${sgClass(v)}" style="font-variant-numeric:tabular-nums">${fmt(v)}</span></div>
+          <div class="bar"><span style="left:${left}%;width:${w}%;background:${col}"></span>
+            <span style="left:50%;width:1px;background:var(--muted)"></span></div>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="hint" style="margin-top:8px">Bars show strokes gained/lost vs a Tour pro per 18 holes. Center line = Tour average. The most negative bar is your biggest opportunity.</div>
+  </div>
+  <div class="card">
+    <h2>🎯 Where to focus</h2>
+    <div class="hint">Your weakest category is <b>${CAT_LABEL[weakest]}</b> (${fmt(per18(agg[weakest]))}/18). ${focusAdvice(weakest)}</div>
+    <div class="hint" style="margin-top:8px"><b>Note:</b> SG vs Tour is always negative for amateurs — what matters is the <i>relative</i> size of each bar. Closing your worst category toward the others is the fastest route to scratch.</div>
+  </div>`;
+}
+function focusAdvice(c){
+  return {
+    OTT:"Prioritise keeping the ball in play off tight tees — club down to your most reliable shot and measure fairway %.",
+    APP:"Build a wedge-distance ladder (know exact carry for 3 swing lengths per wedge) and aim at green centres, not pins.",
+    ARG:"Drill one reliable chip + a safe shot to your common miss; track up-and-down %. Avoid short-siding.",
+    PUTT:"Hammer 6-foot makes (gate drill) and 30–50ft speed control to kill 3-putts."
+  }[c];
+}
+
+/* ===================== HISTORY TAB ===================== */
+function renderHistory(){
+  if(!rounds.length){ main.innerHTML=`<div class="card"><h2>No rounds yet</h2></div>`; return; }
+  let html=`<div class="card"><h2>Rounds</h2>
+    <table><thead><tr><th>Date</th><th>Course</th><th class="num">Holes</th><th class="num">+/-</th><th class="num">SG</th></tr></thead><tbody>`;
+  rounds.slice().reverse().forEach(r=>{ const t=roundTotals(r);
+    html+=`<tr data-id="${r.id}" class="rrow" style="cursor:pointer">
+      <td>${r.date}</td><td>${esc(r.course||"—")}</td><td class="num">${t.holes}</td>
+      <td class="num">${t.strokes-t.par>=0?"+":""}${t.strokes-t.par}</td>
+      <td class="num ${sgClass(t.total)}">${fmt(t.total)}</td></tr>`; });
+  html+=`</tbody></table></div><div id="detail"></div>`;
+  main.innerHTML=html;
+  document.querySelectorAll(".rrow").forEach(tr=>tr.onclick=()=>showRound(+tr.dataset.id));
+}
+function showRound(id){
+  const r=rounds.find(x=>x.id===id); if(!r) return;
+  const t=roundTotals(r);
+  let holesHtml=r.holes.map((h,i)=>{
+    const rows=computeHole(h);
+    const shots=rows.map(s=>{
+      const fin=s.finish; const finTxt=fin.lie==="hole"?"holed":`${LIE_LABEL[fin.lie]} ${fin.lie==="green"?fin.dist+"ft":fin.dist+"y"}`;
+      return `<div class="shotline"><span class="idx">${s.idx}</span>
+        <span class="desc"><span class="tag ${CAT_TAG[s.cat]}">${s.cat}</span> ${LIE_LABEL[s.startLie]} ${Math.round(s.startDist)}${s.startLie==="green"?"ft":"y"} → ${finTxt}</span>
+        <span class="sg ${sgClass(s.sg)}">${fmt(s.sg)}</span></div>`;
+    }).join("");
+    return `<details><summary>Hole ${i+1} · par ${h.par} · ${holeStrokes(h)} strokes · <span class="${sgClass(rows.reduce((a,x)=>a+x.sg,0))}">${fmt(rows.reduce((a,x)=>a+x.sg,0))} SG</span></summary>${shots}</details>`;
+  }).join("");
+  $("#detail").innerHTML=`<div class="card">
+    <div class="hole-head"><h2 style="margin:0">${r.date} · ${esc(r.course||"—")}</h2>
+      <button class="btn danger small" id="del">Delete</button></div>
+    <div class="statgrid" style="margin:6px 0 10px">
+      ${["OTT","APP","ARG","PUTT"].map(c=>`<div class="stat"><div class="k">${CAT_LABEL[c]}</div><div class="v ${sgClass(t[c])}">${fmt(t[c])}</div></div>`).join("")}
+    </div>
+    <div class="stat" style="margin-bottom:10px"><div class="k">Total SG · Score</div><div class="v"><span class="${sgClass(t.total)}">${fmt(t.total)}</span> · ${t.strokes} (${t.strokes-t.par>=0?"+":""}${t.strokes-t.par})</div></div>
+    ${holesHtml}
+  </div>`;
+  $("#del").onclick=()=>{ if(confirm("Delete this round?")){ rounds=rounds.filter(x=>x.id!==id); saveRounds(); renderHistory(); } };
+  $("#detail").scrollIntoView({behavior:"smooth"});
+}
+
+/* ===================== DATA TAB ===================== */
+function renderData(){
+  const connected = !!cloudHandle;
+  const statusTxt = !fsSupported ? `<span class="muted">Not supported in this browser — use Chrome or Edge on desktop for auto-sync, or manual Export/Import below.</span>`
+    : cloudStatus==="on" ? `<span class="sg-pos">☁ Connected & auto-syncing</span> to <b>${esc(cloudName)}</b>`
+    : cloudStatus==="reconnect" ? `<span style="color:#7fd3ff">Reconnect needed</span> — browser needs a tap to re-grant file permission.`
+    : cloudStatus==="error" ? `<span class="sg-neg">Sync error</span> — try Reconnect or Save now.`
+    : `<span class="muted">Not connected. Data is only in this browser.</span>`;
+  main.innerHTML=`
+  <div class="card">
+    <h2>☁ Cloud file sync</h2>
+    <div class="hint">${statusTxt}</div>
+    <div class="hint" style="margin-top:6px">Pick one <b>.json</b> file inside your <b>OneDrive / Dropbox / Google Drive</b> folder. The app then writes to it automatically on every change, and your cloud app syncs it everywhere. On another device, install this same page and connect it to the <i>same synced file</i>.</div>
+    <div class="btnrow">
+      ${!connected
+        ? `<button class="btn" id="cloudconnect">🔗 Connect cloud file</button>`
+        : `        <button class="btn secondary" id="cloudpull">⬇ Load from file</button>
+           <button class="btn secondary" id="cloudsave">⬆ Save now</button>`}
+    </div>
+    ${connected?`<div class="btnrow">
+        ${cloudStatus==="reconnect"?`<button class="btn" id="cloudreconnect">Reconnect</button>`:``}
+        <button class="btn danger small" id="clouddisc">Disconnect file</button>
+      </div>`:``}
+    <div class="hint" style="margin-top:8px"><b>How multi-device works:</b> all devices read/write the same synced file. New rounds merge together by ID. Note: <i>deletions don't propagate across devices</i> (a round deleted on one device may return from another's copy) — by design, to avoid accidental data loss.</div>
+  </div>
+  <div class="card">
+    <h2>Manual backup & restore</h2>
+    <div class="hint">Works in any browser. Even with cloud sync on, an occasional manual export is a good safety net.</div>
+    <div class="btnrow">
+      <button class="btn" id="export">⬇ Export JSON</button>
+      <button class="btn secondary" id="importbtn">⬆ Import JSON</button>
+    </div>
+    <input type="file" id="importfile" accept="application/json" style="display:none">
+    <div class="btnrow"><button class="btn secondary small" id="csv">Export rounds as CSV</button></div>
+  </div>
+  <div class="card">
+    <h2>Benchmark tables</h2>
+    <div class="hint">Strokes-gained is measured against these PGA Tour expected-strokes values (Broadie). You can reset them if needed. Advanced: edit <code>DEFAULT_BENCH</code> in the file to change the baseline.</div>
+    <div class="btnrow"><button class="btn danger small" id="resetbench">Reset benchmarks to default</button></div>
+  </div>
+  <div class="card">
+    <h2>Danger zone</h2>
+    <div class="btnrow"><button class="btn danger" id="wipe">Delete ALL rounds</button></div>
+  </div>`;
+  if($("#cloudconnect")) $("#cloudconnect").onclick=cloudConnect;
+  if($("#cloudpull")) $("#cloudpull").onclick=async()=>{ await cloudPull(false); alert("Loaded latest from file."); };
+  if($("#cloudsave")) $("#cloudsave").onclick=async()=>{ if(await cloudWriteNow()) alert("Saved to file."); };
+  if($("#cloudreconnect")) $("#cloudreconnect").onclick=cloudReconnect;
+  if($("#clouddisc")) $("#clouddisc").onclick=()=>{ if(confirm("Disconnect the cloud file? Your data stays in this browser; the file just stops auto-updating.")) cloudDisconnect(); };
+  $("#export").onclick=exportJSON;
+  $("#importbtn").onclick=()=>$("#importfile").click();
+  $("#importfile").onchange=importJSON;
+  $("#csv").onclick=exportCSV;
+  $("#resetbench").onclick=()=>{ if(confirm("Reset benchmark tables to defaults?")){ bench=clone(DEFAULT_BENCH); saveBench(); alert("Reset done."); } };
+  $("#wipe").onclick=()=>{ if(confirm("Delete ALL saved rounds? This cannot be undone.")){ rounds=[]; saveRounds(); alert("Deleted."); render(); } };
+}
+function exportJSON(){
+  const blob=new Blob([JSON.stringify({rounds,bench},null,2)],{type:"application/json"});
+  download(blob, `sg-tracker-${new Date().toISOString().slice(0,10)}.json`);
+}
+function importJSON(e){
+  const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ const d=JSON.parse(rd.result);
+    if(Array.isArray(d.rounds)){ rounds=d.rounds; saveRounds(); }
+    if(d.bench){ bench=d.bench; saveBench(); }
+    alert("Imported."); render();
+  }catch(err){ alert("Invalid file."); } };
+  rd.readAsText(f);
+}
+function exportCSV(){
+  let csv="date,course,hole,par,shot,category,start_lie,start_dist,finish_lie,finish_dist,penalty,sg\n";
+  rounds.forEach(r=>r.holes.forEach((h,hi)=>{
+    computeHole(h).forEach(s=>{
+      const fin=s.finish;
+      csv+=[r.date,'"'+(r.course||"")+'"',hi+1,h.par,s.idx,s.cat,s.startLie,
+        Math.round(s.startDist),fin.lie,fin.lie==="hole"?0:fin.dist,s.penalty,s.sg.toFixed(3)].join(",")+"\n";
+    });
+  }));
+  download(new Blob([csv],{type:"text/csv"}), `sg-rounds-${new Date().toISOString().slice(0,10)}.csv`);
+}
+function download(blob,name){
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+/* ===================== HELP TAB ===================== */
+function renderHelp(){
+  main.innerHTML=`
+  <div class="card">
+    <h2>How it works</h2>
+    <div class="hint">
+      <p>For every shot you simply record <b>where the ball finished</b> (lie + distance to the pin). The app knows where you started (tee for shot 1, the previous finish for every shot after), looks up the Tour <b>expected strokes</b> for both positions, and computes:</p>
+      <p style="text-align:center"><b>Strokes Gained = E(before) − E(after) − 1 − penalties</b></p>
+      <p>Positive = better than a Tour pro from that spot; negative = worse. Each shot is bucketed into one of four categories.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h2>The four categories</h2>
+    <p><span class="tag ott">OTT</span> <b>Off the Tee</b> — tee shots on par 4s & 5s.</p>
+    <p><span class="tag app">APP</span> <b>Approach</b> — shots from &gt;30 yds (incl. par-3 tee shots).</p>
+    <p><span class="tag arg">ARG</span> <b>Around the Green</b> — shots ≤30 yds, not on the green.</p>
+    <p><span class="tag putt">PUTT</span> <b>Putting</b> — shots on the green (distance in feet).</p>
+  </div>
+  <div class="card">
+    <h2>Logging tips for clean data</h2>
+    <div class="hint">
+      <ul style="padding-left:18px;margin:6px 0">
+        <li>Off the green, enter distance in <b>yards</b>. On the green, switch to <b>feet</b>.</li>
+        <li>Record <b>penalty strokes</b> on the shot that incurred them (e.g. tee shot OB = 1 penalty, then play your finish position).</li>
+        <li>“Recovery” = punch-out from trees / no clear shot.</li>
+        <li>Log every round the same day while you remember distances. ~8–10 rounds gives trustworthy trends.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Reading your numbers (7 → scratch)</h2>
+    <div class="hint">All amateur SG-vs-Tour numbers are negative. Ignore the absolute values; compare the <b>bars to each other</b>. Whichever category is most negative per 18 is your highest-ROI practice area. Re-check every 5 rounds and re-aim your practice.</div>
+    <div class="footnote">Benchmark: PGA Tour expected-strokes tables from Mark Broadie, <i>Every Shot Counts</i> (values approximate/reproduced). Editable in the Data tab / source file.</div>
+  </div>`;
+}
+
+/* ===================== UTIL ===================== */
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+render();
+updateCloudBadge();
+cloudInit();
+
+/* ===================== PWA: install + service worker ===================== */
+let deferredPrompt=null;
+window.addEventListener("beforeinstallprompt",(e)=>{
+  e.preventDefault(); deferredPrompt=e;
+  const b=document.getElementById("installBtn"); if(b) b.style.display="block";
+});
+const installBtn=document.getElementById("installBtn");
+if(installBtn){
+  installBtn.onclick=async()=>{
+    if(!deferredPrompt){
+      alert("To install: in your browser menu choose “Install app” / “Add to Home Screen”.");
+      return;
+    }
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt=null; installBtn.style.display="none";
+  };
+}
+window.addEventListener("appinstalled",()=>{ const b=document.getElementById("installBtn"); if(b) b.style.display="none"; });
+if("serviceWorker" in navigator && location.protocol.startsWith("http")){
+  window.addEventListener("load",()=>{ navigator.serviceWorker.register("sw.js").catch(()=>{}); });
+}
+
+</script>
+</body>
+</html>
