@@ -287,6 +287,27 @@ function migrateProfiles(){
   rounds.forEach(r=>{ if(r.profileId==null){ r.profileId=profiles[0].id; changed=true; } });
   if(changed) saveRoundsLocal();
 }
+// Re-synthesize quick-entry holes that were saved with the old (broken) shot model
+// where the approach finished at "fairway 0" instead of on the green.
+function reSynthQuickHole(h){
+  const rows=computeHole(h);
+  const penalties=rows.reduce((a,r)=>a+(r.penalty||0),0);
+  const putts=rows.filter(r=>r.startLie==="green").length;
+  const score=h.shots.length+penalties;
+  const firHit = h.par>=4 ? !!(h.shots[0] && h.shots[0].lie==="fairway") : false;
+  const shots=synthesizeHole(h.par, h.teeYds||defTee(h.par), score, putts, firHit, penalties);
+  return Object.assign({}, h, {shots});
+}
+function migrateQuickHoles(){
+  // Detect the old bug signature: a non-green, non-hole shot finishing at distance 0.
+  const broken=h=>h && h.quick && Array.isArray(h.shots) &&
+    h.shots.some(s=>s.lie!=="green" && s.lie!=="hole" && (s.dist===0));
+  let changed=false;
+  rounds.forEach(r=>{ if(!r.holes) return;
+    r.holes.forEach((h,i)=>{ if(broken(h)){ r.holes[i]=reSynthQuickHole(h); changed=true; } });
+  });
+  if(changed) saveRoundsLocal();
+}
 function loadBench(){ try{const b=JSON.parse(localStorage.getItem(LS_BENCH)); return b||clone(DEFAULT_BENCH)}catch(e){return clone(DEFAULT_BENCH)} }
 function saveBenchLocal(){ localStorage.setItem(LS_BENCH, JSON.stringify(bench)); }
 function saveBench(){ saveBenchLocal(); cloudPush(); }
@@ -402,7 +423,7 @@ function dataBundle(){ return {rounds,bench,courses,profiles,activeProfileId,set
 // Fold a remote data bundle into local state (union merge). Returns true if applied.
 function applyIncoming(d){
   if(!d) return false;
-  if(Array.isArray(d.rounds)){ rounds=mergeRounds(rounds,d.rounds); saveRoundsLocal(); }
+  if(Array.isArray(d.rounds)){ rounds=mergeRounds(rounds,d.rounds); saveRoundsLocal(); if(typeof migrateQuickHoles==="function") migrateQuickHoles(); }
   if(Array.isArray(d.courses)){ courses=mergeById(courses,d.courses); saveCoursesLocal(); }
   if(Array.isArray(d.profiles)&&d.profiles.length){ profiles=mergeById(profiles,d.profiles); saveProfilesLocal();
     if(!profiles.some(p=>p.id===activeProfileId)){ activeProfileId=profiles[0].id; saveActiveProfileLocal(); }
@@ -771,30 +792,41 @@ function startQuickHole(){
   draft.curHole={ par: ch?ch.par:4, teeYds: ch?ch.yds:defTee(ch?ch.par:4), shots:[], quick:true };
   saveDraft(); renderQuickEntry(true);
 }
-/* Build a plausible shot sequence from score + putts + fairway-hit so SG & all stats work. */
+/* Build a plausible shot sequence from score + putts + fairway-hit so SG & all stats work.
+   Models the ball moving tee → fairway/rough → green → cup so each shot has a realistic
+   start/finish. The LAST non-putt shot finishes ON the green (never "fairway 0"). */
 function synthesizeHole(par, teeYds, score, putts, firHit, penalties){
   penalties=Math.max(0,penalties|0); putts=Math.max(0,putts|0); score=Math.max(1,score|0);
   let nonPutt=score - putts - penalties;
   if(nonPutt<1) nonPutt=1;
   const gir = nonPutt <= (par-2);
-  const firstPutt = putts<=1?7 : putts===2?22 : 38;   // feet
+  const firstPutt = putts<=1?6 : putts===2?20 : 36;   // feet
   const shots=[];
-  const offCount=nonPutt-1; // shots finishing OFF the green (last non-putt finishes on green)
-  const startD = Math.max(60, Math.min(teeYds*0.42, 230));
-  for(let k=0;k<offCount;k++){
-    let lie = (k===0 && par>=4) ? (firHit?"fairway":"rough") : "fairway";
-    const frac=(k+1)/offCount;
-    let d=Math.round(startD*(1-frac) + (gir?0:10)*frac);
-    if(!gir && k===offCount-1){ d=Math.max(8,Math.min(25,d||15)); } // greenside, sets up a chip
-    shots.push({lie, dist:d, penalty: k===0?penalties:0});
+  const offN = nonPutt-1;   // non-putt shots finishing OFF the green (before the green-landing shot)
+
+  // Yards-from-hole each off-green shot finishes at, descending toward the green.
+  const finishes=[];
+  if(offN>0){
+    let startLeft;
+    if(par>=4){ const drive=Math.min(275, Math.max(180, teeYds-30)); startLeft=Math.max(15, teeYds-drive); }
+    else { startLeft=teeYds; }
+    for(let k=0;k<offN;k++){
+      finishes.push(Math.max(8, Math.round(startLeft*(1-k/offN))));
+    }
+    if(!gir) finishes[offN-1]=Math.min(finishes[offN-1], 18); // greenside chip when green missed
+  }
+
+  for(let i=0;i<offN;i++){
+    const lie = (i===0 && par>=4) ? (firHit?"fairway":"rough") : "fairway";
+    shots.push({lie, dist:finishes[i], penalty: i===0?penalties:0});
   }
   if(putts===0){
-    shots.push({lie:"hole", dist:0, penalty: offCount===0?penalties:0});
+    shots.push({lie:"hole", dist:0, penalty: offN===0?penalties:0});   // holed from off the green
   } else {
-    shots.push({lie:"green", dist:firstPutt, penalty: offCount===0?penalties:0});
+    shots.push({lie:"green", dist:firstPutt, penalty: offN===0?penalties:0});  // ball reaches the green
     for(let i=0;i<putts;i++){
       if(i===putts-1) shots.push({lie:"hole", dist:0, penalty:0});
-      else shots.push({lie:"green", dist: i===0?Math.max(2,Math.round(firstPutt*0.25)):3, penalty:0});
+      else shots.push({lie:"green", dist:Math.max(2,Math.round(firstPutt*0.3)), penalty:0});
     }
   }
   return shots;
@@ -1785,6 +1817,7 @@ function maybeOnboard(){
 }
 
 migrateProfiles();
+migrateQuickHoles();
 renderProfileSelector();
 setupTheme();
 render();
