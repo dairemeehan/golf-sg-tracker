@@ -1,7 +1,7 @@
 {
-  "name": "Strokes Gained Tracker",
-  "short_name": "SG Tracker",
-  "description": "Manual golf strokes-gained tracker with cloud-file sync.",
+  "name": "Daire Meehan's Golf Stats Tracker",
+  "short_name": "DM SG",
+  "description": "Daire Meehan's manual golf strokes-gained stats tracker with cloud-file sync.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
