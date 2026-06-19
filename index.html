@@ -340,6 +340,11 @@ async function idbDel(k){ const db=await idb(); return new Promise((res,rej)=>{
 function setCloud(status){ cloudStatus=status; updateCloudBadge(); }
 function updateCloudBadge(){
   const el=document.getElementById("cloudBadge"); if(!el) return;
+  if(sbActive()){
+    const m={ on:["on","☁ synced"], saving:["saving","☁ saving…"], error:["error","☁ sync error"], off:["off","☁ cloud"] };
+    const [cls,txt]=m[sbStatusVal]||m.off;
+    el.className="cloudbadge "+cls; el.textContent=txt; el.onclick=null; el.style.cursor="default"; return;
+  }
   const map={ off:["off","● local only"], on:["on","☁ synced"+(cloudName?" · "+cloudName:"")],
     saving:["saving","☁ saving…"], reconnect:["reconnect","☁ tap to reconnect"], error:["error","☁ sync error"] };
   const [cls,txt]=map[cloudStatus]||map.off;
@@ -390,10 +395,24 @@ async function cloudWriteNow(){
   if(!cloudHandle) return false;
   if(!(await ensurePerm(cloudHandle))){ setCloud("reconnect"); return false; }
   const w=await cloudHandle.createWritable();
-  await w.write(JSON.stringify({rounds,bench,courses,profiles,activeProfileId,settings,savedAt:new Date().toISOString()},null,2));
+  await w.write(JSON.stringify(dataBundle(),null,2));
   await w.close(); setCloud("on"); return true;
 }
+function dataBundle(){ return {rounds,bench,courses,profiles,activeProfileId,settings,savedAt:new Date().toISOString()}; }
+// Fold a remote data bundle into local state (union merge). Returns true if applied.
+function applyIncoming(d){
+  if(!d) return false;
+  if(Array.isArray(d.rounds)){ rounds=mergeRounds(rounds,d.rounds); saveRoundsLocal(); }
+  if(Array.isArray(d.courses)){ courses=mergeById(courses,d.courses); saveCoursesLocal(); }
+  if(Array.isArray(d.profiles)&&d.profiles.length){ profiles=mergeById(profiles,d.profiles); saveProfilesLocal();
+    if(!profiles.some(p=>p.id===activeProfileId)){ activeProfileId=profiles[0].id; saveActiveProfileLocal(); }
+    renderProfileSelector(); }
+  if(d.bench && JSON.stringify(bench)===JSON.stringify(DEFAULT_BENCH)){ bench=d.bench; saveBenchLocal(); }
+  if(d.settings){ settings=Object.assign({}, DEFAULT_SETTINGS, d.settings); saveSettingsLocal(); applyTheme(); }
+  return true;
+}
 function cloudPush(){
+  sbPush();
   if(!cloudHandle) return;
   clearTimeout(cloudTimer); setCloud("saving");
   cloudTimer=setTimeout(()=>{ cloudWriteNow().catch(()=>setCloud("error")); }, 800);
@@ -403,15 +422,7 @@ async function cloudPull(silent){
   if(!(await ensurePerm(cloudHandle))){ setCloud("reconnect"); return false; }
   try{
     const f=await cloudHandle.getFile(); const txt=await f.text();
-    if(txt.trim()){ const d=JSON.parse(txt);
-      if(Array.isArray(d.rounds)){ rounds=mergeRounds(rounds,d.rounds); saveRoundsLocal(); }
-      if(Array.isArray(d.courses)){ courses=mergeById(courses,d.courses); saveCoursesLocal(); }
-      if(Array.isArray(d.profiles)&&d.profiles.length){ profiles=mergeById(profiles,d.profiles); saveProfilesLocal();
-        if(!profiles.some(p=>p.id===activeProfileId)){ activeProfileId=profiles[0].id; saveActiveProfileLocal(); }
-        renderProfileSelector(); }
-      if(d.bench && JSON.stringify(bench)===JSON.stringify(DEFAULT_BENCH)){ bench=d.bench; saveBenchLocal(); }
-      if(d.settings){ settings=Object.assign({}, DEFAULT_SETTINGS, d.settings); saveSettingsLocal(); applyTheme(); }
-    }
+    if(txt.trim()){ applyIncoming(JSON.parse(txt)); }
     if(!silent) render();
     return true;
   }catch(e){ return false; } // empty/new file is fine
@@ -425,6 +436,80 @@ async function cloudInit(){
     if(p==="granted"){ setCloud("on"); await cloudPull(false); }
     else setCloud("reconnect");
   }catch(e){}
+}
+
+/* ===================== CLOUD ACCOUNT SYNC (Supabase) =====================
+   Works on EVERY device incl. iPhone (uses plain fetch, no File System API).
+   Your data auto-saves to a row in a Supabase table keyed by a private
+   "sync code". Open the app anywhere, enter the same code, and your data
+   loads. The anon key below is SAFE to publish — access is governed by the
+   database's row-level-security policy, not by hiding the key.
+   ======================================================================= */
+const SB_URL = "https://wleiulkmgomfrylfegau.supabase.co";   // e.g. https://xxxxxxxx.supabase.co   (filled in once provided)
+const SB_KEY = "sb_publishable_BQ1R87ZRyiU0OCnB4IuPWA_X7EqTWbw";   // anon/publishable key            (filled in once provided)
+const LS_SYNCCODE = "sg_synccode_v1";
+let sbStatusVal = "off", sbTimer = null;
+function sbConfigured(){ return !!(SB_URL && SB_KEY); }
+function sbCode(){ return localStorage.getItem(LS_SYNCCODE) || ""; }
+function sbActive(){ return sbConfigured() && !!sbCode(); }
+function sbGenCode(){
+  const a=new Uint8Array(15); crypto.getRandomValues(a);
+  return btoa(String.fromCharCode.apply(null,a)).replace(/[+/=]/g,"").slice(0,20);
+}
+function sbHeaders(extra){ return Object.assign({ apikey:SB_KEY, Authorization:"Bearer "+SB_KEY }, extra||{}); }
+function sbSetStatus(s){ sbStatusVal=s; updateCloudBadge(); }
+async function sbWriteNow(){
+  if(!sbActive()) return false;
+  const res=await fetch(SB_URL+"/rest/v1/sync_data",{
+    method:"POST",
+    headers:sbHeaders({ "Content-Type":"application/json", Prefer:"resolution=merge-duplicates,return=minimal" }),
+    body:JSON.stringify([{ code:sbCode(), payload:dataBundle(), updated_at:new Date().toISOString() }])
+  });
+  if(!res.ok) throw new Error("save "+res.status);
+  sbSetStatus("on"); return true;
+}
+function sbPush(){
+  if(!sbActive()) return;
+  clearTimeout(sbTimer); sbSetStatus("saving");
+  sbTimer=setTimeout(()=>{ sbWriteNow().catch(()=>sbSetStatus("error")); }, 900);
+}
+async function sbPull(silent){
+  if(!sbActive()) return false;
+  try{
+    const res=await fetch(SB_URL+"/rest/v1/sync_data?code=eq."+encodeURIComponent(sbCode())+"&select=payload",
+      { headers:sbHeaders() });
+    if(!res.ok) throw new Error("load "+res.status);
+    const arr=await res.json();
+    if(arr && arr[0] && arr[0].payload) applyIncoming(arr[0].payload);
+    sbSetStatus("on");
+    if(!silent) render();
+    return true;
+  }catch(e){ sbSetStatus("error"); return false; }
+}
+async function sbConnect(){
+  if(!sbConfigured()){ alert("Cloud sync isn't configured in this build yet."); return; }
+  if(!sbCode()) localStorage.setItem(LS_SYNCCODE, sbGenCode());
+  sbSetStatus("saving");
+  try{ await sbPull(true); await sbWriteNow(); toast("Cloud sync on. Copy your code to use on other devices."); }
+  catch(e){ sbSetStatus("error"); }
+  renderData();
+}
+async function sbLoadCode(code){
+  code=(code||"").trim();
+  if(!code){ alert("Paste your sync code first."); return; }
+  if(!sbConfigured()){ alert("Cloud sync isn't configured in this build yet."); return; }
+  localStorage.setItem(LS_SYNCCODE, code);
+  sbSetStatus("saving");
+  const ok=await sbPull(true);
+  if(ok){ await sbWriteNow().catch(()=>{}); render(); renderData(); toast("Connected — your rounds are syncing."); }
+  else { sbSetStatus("error"); renderData(); }
+}
+function sbDisconnect(){
+  if(!confirm("Stop cloud sync on this device? Your data stays here and in the cloud.")) return;
+  localStorage.removeItem(LS_SYNCCODE); sbSetStatus("off"); renderData();
+}
+async function sbInit(){
+  if(sbActive()){ sbSetStatus("on"); await sbPull(false); }
 }
 
 /* ===================== BENCHMARK LOOKUP ===================== */
@@ -1382,6 +1467,55 @@ function deleteRoundWithUndo(id){
 }
 
 /* ===================== DATA TAB ===================== */
+function renderSbCard(){
+  if(!sbConfigured()){
+    return `<div class="card" style="border-color:var(--accent)">
+      <h2>📱 Cloud sync — all devices</h2>
+      <div class="hint">Cloud account sync (the iPhone-friendly option) isn't switched on in this build yet. Once configured, you'll get automatic sync across every device with no file picking.</div>
+      <div class="hint" style="margin-top:6px">For now use <b>Cloud file sync</b> (desktop) or <b>Export/Import</b> below.</div>
+    </div>`;
+  }
+  const code=sbCode();
+  if(!code){
+    return `<div class="card" style="border-color:var(--accent)">
+      <h2>📱 Cloud sync — all devices <span class="pill">iPhone ✓</span></h2>
+      <div class="hint">Turn on automatic sync across every device — phone, tablet, desktop. No files to pick. You'll get a private <b>sync code</b>; enter it on another device to load your data there.</div>
+      <div class="btnrow"><button class="btn" id="sbconnect">☁ Turn on cloud sync</button></div>
+      <div style="margin-top:10px"><label>Already have a sync code? Paste it to load your data</label>
+        <input id="sbcodein" placeholder="your sync code" autocomplete="off">
+        <div class="btnrow"><button class="btn secondary" id="sbload">⬇ Load from code</button></div></div>
+    </div>`;
+  }
+  const st = sbStatusVal==="on" ? `<span class="sg-pos">☁ Connected & auto-syncing</span>`
+    : sbStatusVal==="saving" ? `<span style="color:#7fd3ff">Saving…</span>`
+    : sbStatusVal==="error" ? `<span class="sg-neg">Sync error</span> — check your connection.`
+    : `<span class="muted">Idle</span>`;
+  return `<div class="card" style="border-color:var(--accent)">
+    <h2>📱 Cloud sync — all devices <span class="pill">iPhone ✓</span></h2>
+    <div class="hint">${st}</div>
+    <div style="margin-top:10px"><label>Your sync code <span class="muted">— keep it private; it unlocks your data</span></label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="sbcode" value="${esc(code)}" readonly style="font-family:monospace">
+        <button class="btn secondary small" id="sbcopy">Copy</button>
+      </div>
+      <div class="hint" style="margin-top:6px">On a new device: open this same link, then <b>Load from code</b> with this code. New rounds from all devices merge together automatically.</div>
+    </div>
+    <div class="btnrow">
+      <button class="btn secondary" id="sbpullnow">⬇ Refresh now</button>
+      <button class="btn secondary" id="sbsavenow">⬆ Save now</button>
+      <button class="btn danger small" id="sbdisc">Stop sync here</button>
+    </div>
+  </div>`;
+}
+function wireSbCard(){
+  if($("#sbconnect")) $("#sbconnect").onclick=sbConnect;
+  if($("#sbload")) $("#sbload").onclick=()=>sbLoadCode($("#sbcodein").value);
+  if($("#sbcopy")) $("#sbcopy").onclick=()=>{ const i=$("#sbcode"); i.select();
+    navigator.clipboard?.writeText(i.value).then(()=>toast("Sync code copied.")).catch(()=>{}); };
+  if($("#sbpullnow")) $("#sbpullnow").onclick=async()=>{ if(await sbPull(false)) toast("Refreshed from cloud."); };
+  if($("#sbsavenow")) $("#sbsavenow").onclick=async()=>{ try{ await sbWriteNow(); toast("Saved to cloud."); }catch(e){ toast("Save failed."); } };
+  if($("#sbdisc")) $("#sbdisc").onclick=sbDisconnect;
+}
 function renderData(){
   const connected = !!cloudHandle;
   const statusTxt = !fsSupported ? `<span class="muted">Not supported in this browser — use Chrome or Edge on desktop for auto-sync, or manual Export/Import below.</span>`
@@ -1390,8 +1524,9 @@ function renderData(){
     : cloudStatus==="error" ? `<span class="sg-neg">Sync error</span> — try Reconnect or Save now.`
     : `<span class="muted">Not connected. Data is only in this browser.</span>`;
   main.innerHTML=`
+  ${renderSbCard()}
   <div class="card">
-    <h2>☁ Cloud file sync</h2>
+    <h2>☁ Cloud file sync <span class="muted" style="font-weight:400">(desktop Chrome/Edge)</span></h2>
     <div class="hint">${statusTxt}</div>
     <div class="hint" style="margin-top:6px">Pick one <b>.json</b> file inside your <b>OneDrive / Dropbox / Google Drive</b> folder. The app then writes to it automatically on every change, and your cloud app syncs it everywhere. On another device, install this same page and connect it to the <i>same synced file</i>.</div>
     <div class="btnrow">
@@ -1442,6 +1577,7 @@ function renderData(){
   </div>`;
   if($("#cloudconnect")) $("#cloudconnect").onclick=cloudConnect;
   if($("#cloudpull")) $("#cloudpull").onclick=async()=>{ await cloudPull(false); alert("Loaded latest from file."); };
+  wireSbCard();
   if($("#cloudsave")) $("#cloudsave").onclick=async()=>{ if(await cloudWriteNow()) alert("Saved to file."); };
   if($("#cloudreconnect")) $("#cloudreconnect").onclick=cloudReconnect;
   if($("#clouddisc")) $("#clouddisc").onclick=()=>{ if(confirm("Disconnect the cloud file? Your data stays in this browser; the file just stops auto-updating.")) cloudDisconnect(); };
@@ -1628,10 +1764,10 @@ let lastPull=Date.now();
 function setupAutoPull(){
   const tryPull=()=>{
     if(document.visibilityState!=="visible") return;
-    if(!cloudHandle) return;
     if(Date.now()-lastPull < 4000) return;   // debounce
     lastPull=Date.now();
-    cloudPull(true).then(ok=>{ if(ok && tab!=="play") render(); }).catch(()=>{});
+    if(sbActive()) sbPull(true).then(ok=>{ if(ok && tab!=="play") render(); }).catch(()=>{});
+    if(cloudHandle) cloudPull(true).then(ok=>{ if(ok && tab!=="play") render(); }).catch(()=>{});
   };
   document.addEventListener("visibilitychange", tryPull);
   window.addEventListener("focus", tryPull);
@@ -1654,6 +1790,7 @@ setupTheme();
 render();
 updateCloudBadge();
 cloudInit();
+sbInit();
 setupAutoPull();
 maybeOnboard();
 
