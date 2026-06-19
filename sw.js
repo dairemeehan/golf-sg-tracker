@@ -1,5 +1,5 @@
 /* Strokes Gained Tracker service worker — offline app shell caching */
-const CACHE = "sg-tracker-v5";
+const CACHE = "sg-tracker-v6";
 const ASSETS = [
   "./",
   "./index.html",
