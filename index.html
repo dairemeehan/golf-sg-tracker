@@ -149,16 +149,51 @@ const DEFAULT_BENCH = {
   }
 };
 
-/* ===================== STATE & STORAGE ===================== */
-const LS_ROUNDS="sg_rounds_v1", LS_BENCH="sg_bench_v1", LS_DRAFT="sg_draft_v1";
+/* ===================== SEED COURSE LIBRARY =====================
+   Reusable course layouts so you don't re-enter holes every round.
+   IMPORTANT: the famous Irish courses below carry the correct TOTAL par
+   but a STANDARD hole-by-hole layout (default yardages) — NOT the exact
+   scorecard. They're labelled "default layout"; edit pars/yardages once
+   to match the real card, then save. Your own saved courses are exact.
+   (No free public per-hole dataset exists: OSM coverage is sparse and the
+   Golf Ireland / DotGolf ISV API is gated behind club credentials.)
+   ============================================================ */
+const BASE_PARS = {
+  72:[4,5,4,3,4,4,3,5,4, 4,4,3,5,4,4,3,4,5],
+  71:[4,4,4,3,4,4,3,5,4, 4,4,3,5,4,4,3,4,5],
+  70:[4,4,4,3,4,4,3,5,4, 4,4,3,5,4,4,3,4,4]
+};
+const PAR_YDS = {3:175, 4:405, 5:530};
+function holesFromPars(pars){ return pars.map(p=>({par:p, yds:PAR_YDS[p]||400})); }
+function seedIrish(id,name,par){ return {id, name, region:"Ireland", par, holes:holesFromPars(BASE_PARS[par]||BASE_PARS[72]), verified:false}; }
+const SEED_COURSES = [
+  seedIrish(1001,"Lahinch (Old Course)",72),
+  seedIrish(1002,"Royal County Down (Championship)",71),
+  seedIrish(1003,"Royal Portrush (Dunluce)",72),
+  seedIrish(1004,"Portmarnock (Championship)",72),
+  seedIrish(1005,"Ballybunion (Old Course)",71),
+  seedIrish(1006,"The K Club (Palmer)",72),
+  seedIrish(1007,"Old Head of Kinsale",72),
+  seedIrish(1008,"Adare Manor",72),
+  seedIrish(1009,"County Sligo (Rosses Point)",71),
+  seedIrish(1010,"Waterville",72),
+  {id:1100,name:"Standard Par 72",region:"Template",par:72,holes:holesFromPars(BASE_PARS[72]),verified:true},
+  {id:1101,name:"Standard Par 71",region:"Template",par:71,holes:holesFromPars(BASE_PARS[71]),verified:true},
+  {id:1102,name:"Standard Par 70",region:"Template",par:70,holes:holesFromPars(BASE_PARS[70]),verified:true}
+];
+const LS_ROUNDS="sg_rounds_v1", LS_BENCH="sg_bench_v1", LS_DRAFT="sg_draft_v1", LS_COURSES="sg_courses_v1";
 let bench = loadBench();
 let rounds = loadRounds();
+let courses = loadCourses();
 let draft = loadDraft();   // in-progress round
 let tab = "play";
 
 function loadRounds(){ try{return JSON.parse(localStorage.getItem(LS_ROUNDS))||[]}catch(e){return[]} }
 function saveRoundsLocal(){ localStorage.setItem(LS_ROUNDS, JSON.stringify(rounds)); }
 function saveRounds(){ saveRoundsLocal(); cloudPush(); }
+function loadCourses(){ try{const c=JSON.parse(localStorage.getItem(LS_COURSES)); return (Array.isArray(c)&&c.length)?c:clone(SEED_COURSES);}catch(e){return clone(SEED_COURSES);} }
+function saveCoursesLocal(){ localStorage.setItem(LS_COURSES, JSON.stringify(courses)); }
+function saveCourses(){ saveCoursesLocal(); cloudPush(); }
 function loadBench(){ try{const b=JSON.parse(localStorage.getItem(LS_BENCH)); return b||clone(DEFAULT_BENCH)}catch(e){return clone(DEFAULT_BENCH)} }
 function saveBenchLocal(){ localStorage.setItem(LS_BENCH, JSON.stringify(bench)); }
 function saveBench(){ saveBenchLocal(); cloudPush(); }
@@ -214,6 +249,13 @@ function mergeRounds(a,b){
     if(!ex || (r.holes?.length||0)>(ex.holes?.length||0)) map.set(r.id,r); });
   return [...map.values()].sort((x,y)=>x.id-y.id);
 }
+// Union-merge by id; incoming (b) wins on conflict (latest edit).
+function mergeById(a,b){
+  const map=new Map();
+  [...(a||[])].forEach(r=>{ if(r&&r.id!=null) map.set(r.id,r); });
+  [...(b||[])].forEach(r=>{ if(r&&r.id!=null) map.set(r.id,r); });
+  return [...map.values()];
+}
 async function cloudConnect(){
   if(!fsSupported){ alert("Direct file writing needs Chrome or Edge on desktop. On other browsers use manual Export/Import below."); return; }
   try{
@@ -237,7 +279,7 @@ async function cloudWriteNow(){
   if(!cloudHandle) return false;
   if(!(await ensurePerm(cloudHandle))){ setCloud("reconnect"); return false; }
   const w=await cloudHandle.createWritable();
-  await w.write(JSON.stringify({rounds,bench,savedAt:new Date().toISOString()},null,2));
+  await w.write(JSON.stringify({rounds,bench,courses,savedAt:new Date().toISOString()},null,2));
   await w.close(); setCloud("on"); return true;
 }
 function cloudPush(){
@@ -252,6 +294,7 @@ async function cloudPull(silent){
     const f=await cloudHandle.getFile(); const txt=await f.text();
     if(txt.trim()){ const d=JSON.parse(txt);
       if(Array.isArray(d.rounds)){ rounds=mergeRounds(rounds,d.rounds); saveRoundsLocal(); }
+      if(Array.isArray(d.courses)){ courses=mergeById(courses,d.courses); saveCoursesLocal(); }
       if(d.bench && JSON.stringify(bench)===JSON.stringify(DEFAULT_BENCH)){ bench=d.bench; saveBenchLocal(); }
     }
     if(!silent) render();
@@ -388,19 +431,39 @@ function render(){
 }
 
 /* ===================== PLAY TAB ===================== */
-function newDraft(){
-  draft={ id:Date.now(), date:new Date().toISOString().slice(0,10), course:"", holes:[], curHole:null };
+function newDraft(course){
+  draft={ id:Date.now(), date:new Date().toISOString().slice(0,10),
+    course: course?course.name:"", courseId: course?course.id:null,
+    courseHoles: course?clone(course.holes):null, holes:[], curHole:null };
   saveDraft();
+}
+function courseOptions(selId){
+  const irish=courses.filter(c=>c.region==="Ireland");
+  const mine=courses.filter(c=>!c.region||c.region==="Mine");
+  const tmpl=courses.filter(c=>c.region==="Template");
+  const opt=c=>`<option value="${c.id}" ${c.id==selId?"selected":""}>${esc(c.name)} (par ${c.par||c.holes.reduce((a,h)=>a+h.par,0)})${c.verified===false?" — default layout":""}</option>`;
+  let h=`<option value="">— No course (enter holes manually) —</option>`;
+  if(mine.length) h+=`<optgroup label="My courses">${mine.map(opt).join("")}</optgroup>`;
+  if(irish.length) h+=`<optgroup label="Ireland (verify pars)">${irish.map(opt).join("")}</optgroup>`;
+  if(tmpl.length) h+=`<optgroup label="Templates">${tmpl.map(opt).join("")}</optgroup>`;
+  return h;
 }
 function renderPlay(){
   if(!draft){
     main.innerHTML=`
     <div class="card">
       <h2>Start a round</h2>
-      <div class="hint">Log each shot by recording <b>where it finished</b>. The app figures out strokes gained from there.</div>
-      <div class="btnrow"><button class="btn" id="start">＋ New round</button></div>
+      <div class="hint">Pick a saved course to auto-fill each hole's par &amp; length, or start blank. Log each shot by recording <b>where it finished</b>.</div>
+      <label>Course</label>
+      <select id="coursePick">${courseOptions("")}</select>
+      <div class="hint" style="margin-top:6px">Irish courses use the correct total par with a <b>standard</b> hole layout — tweak any hole as you go, then “Save as course” to keep your exact version.</div>
+      <div class="btnrow"><button class="btn" id="start">＋ Start round</button></div>
     </div>`+resumeHistoryHint();
-    $("#start").onclick=()=>{ newDraft(); startHolePrompt(); };
+    $("#start").onclick=()=>{
+      const id=$("#coursePick").value;
+      const c = id? courses.find(x=>String(x.id)===String(id)) : null;
+      newDraft(c); startHolePrompt();
+    };
     return;
   }
   if(draft.curHole){ renderHoleEntry(); return; }
@@ -428,18 +491,20 @@ function renderPlay(){
       <button class="btn" id="addhole">＋ Add hole</button>
       <button class="btn secondary" id="finish">Finish & save</button>
     </div>
+    ${draft.holes.length?`<div class="btnrow"><button class="btn secondary small" id="savecourse">💾 Save as course</button></div>`:``}
     <div class="btnrow"><button class="btn danger small" id="discard">Discard round</button></div>
   </div>`;
   $("#rdate").onchange=e=>{draft.date=e.target.value;saveDraft();};
   $("#rcourse").oninput=e=>{draft.course=e.target.value;saveDraft();};
   $("#addhole").onclick=startHolePrompt;
   $("#finish").onclick=finishRound;
+  if($("#savecourse")) $("#savecourse").onclick=saveDraftAsCourse;
   $("#discard").onclick=()=>{ if(confirm("Discard this round?")){draft=null;saveDraft();render();} };
 }
 function startHolePrompt(){
-  const par = draft.holes.length? draft.holes[draft.holes.length-1].par : 4;
-  draft.curHole={ par:4, teeYds:400, shots:[] };
-  // sensible default tee distance by par
+  const idx = draft.holes.length;
+  const ch = (draft.courseHoles && draft.courseHoles[idx]) ? draft.courseHoles[idx] : null;
+  draft.curHole={ par: ch?ch.par:4, teeYds: ch?ch.yds:400, shots:[] };
   saveDraft(); renderHoleEntry(true);
 }
 function renderHoleEntry(isNew){
@@ -550,10 +615,27 @@ function commitCurHoleIfAny(){
   const h=draft.curHole;
   if(h && h.shots && h.shots.length){ draft.holes.push(clone(h)); }
 }
+function saveDraftAsCourse(){
+  if(!draft || !draft.holes.length){ alert("Log at least one hole first."); return; }
+  const def = draft.course || "";
+  const name = prompt("Save these "+draft.holes.length+" holes as a course. Name:", def);
+  if(!name) return;
+  const holes = draft.holes.map(h=>({par:h.par, yds:h.teeYds}));
+  const existing = courses.find(c=>c.name.toLowerCase()===name.toLowerCase() && (!c.region||c.region==="Mine"));
+  if(existing && confirm("Update existing course \""+existing.name+"\"?")){
+    existing.holes=holes; existing.par=holes.reduce((a,h)=>a+h.par,0); existing.verified=true;
+  } else {
+    const c={ id:Date.now(), name, region:"Mine", verified:true,
+      par:holes.reduce((a,h)=>a+h.par,0), holes };
+    courses.push(c); draft.courseId=c.id;
+  }
+  saveCourses(); saveDraft();
+  alert("Course saved — it'll appear in the picker for future rounds.");
+}
 function finishRound(){
   if(!draft.holes.length){ alert("Add at least one hole first."); return; }
   draft.course=$("#rcourse")?.value||draft.course;
-  const r={ id:draft.id, date:draft.date, course:draft.course, holes:draft.holes };
+  const r={ id:draft.id, date:draft.date, course:draft.course, courseId:draft.courseId||null, holes:draft.holes };
   rounds.push(r); saveRounds();
   draft=null; saveDraft();
   tab="summary"; document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab==="summary"));
@@ -684,6 +766,14 @@ function renderData(){
     <div class="hint" style="margin-top:8px"><b>How multi-device works:</b> all devices read/write the same synced file. New rounds merge together by ID. Note: <i>deletions don't propagate across devices</i> (a round deleted on one device may return from another's copy) — by design, to avoid accidental data loss.</div>
   </div>
   <div class="card">
+    <h2>⛳ Course library</h2>
+    <div class="hint">Pick a course when starting a round to auto-fill every hole. Edit a course below, or use “Save as course” mid-round to capture your exact layout.</div>
+    <div id="courseList" style="margin-top:8px"></div>
+    <div class="btnrow"><button class="btn secondary small" id="addcourse">＋ New blank course</button>
+      <button class="btn secondary small" id="resetcourses">Restore seed courses</button></div>
+    <div class="hint" style="margin-top:8px">⚠ Irish courses are seeded with the correct <b>total par</b> but a <b>standard</b> hole layout (not the official card). Edit pars/yardages to match, then they're saved as yours.</div>
+  </div>
+  <div class="card">
     <h2>Manual backup & restore</h2>
     <div class="hint">Works in any browser. Even with cloud sync on, an occasional manual export is a good safety net.</div>
     <div class="btnrow">
@@ -713,9 +803,58 @@ function renderData(){
   $("#csv").onclick=exportCSV;
   $("#resetbench").onclick=()=>{ if(confirm("Reset benchmark tables to defaults?")){ bench=clone(DEFAULT_BENCH); saveBench(); alert("Reset done."); } };
   $("#wipe").onclick=()=>{ if(confirm("Delete ALL saved rounds? This cannot be undone.")){ rounds=[]; saveRounds(); alert("Deleted."); render(); } };
+  renderCourseList();
+  if($("#addcourse")) $("#addcourse").onclick=()=>{
+    const name=prompt("New course name:"); if(!name) return;
+    courses.push({id:Date.now(), name, region:"Mine", verified:true, par:72, holes:holesFromPars(BASE_PARS[72])});
+    saveCourses(); renderData();
+  };
+  if($("#resetcourses")) $("#resetcourses").onclick=()=>{
+    if(confirm("Restore the built-in seed courses? Your own saved courses are kept.")){
+      const mine=courses.filter(c=>c.region==="Mine");
+      courses=mergeById(clone(SEED_COURSES), mine); saveCourses(); renderData();
+    }
+  };
+}
+function renderCourseList(){
+  const el=$("#courseList"); if(!el) return;
+  if(!courses.length){ el.innerHTML=`<div class="hint">No courses yet.</div>`; return; }
+  const order={Mine:0,Ireland:1,Template:2};
+  const sorted=[...courses].sort((a,b)=>(order[a.region||"Mine"]-order[b.region||"Mine"])||a.name.localeCompare(b.name));
+  el.innerHTML=sorted.map(c=>{
+    const par=c.par||c.holes.reduce((a,h)=>a+h.par,0);
+    const yards=c.holes.reduce((a,h)=>a+(h.yds||0),0);
+    const tag=c.region==="Ireland"?`<span class="tag arg">IE</span>`:c.region==="Template"?`<span class="tag">tmpl</span>`:`<span class="tag putt">mine</span>`;
+    return `<details data-id="${c.id}">
+      <summary>${tag} ${esc(c.name)} · par ${par} · ${yards}y${c.verified===false?` <span class="tag" style="color:var(--warn);border-color:#735c2f">default</span>`:``}</summary>
+      <div style="overflow-x:auto"><table style="margin-top:8px"><thead><tr><th>Hole</th>${c.holes.map((_,i)=>`<th class="num">${i+1}</th>`).join("")}</tr></thead>
+        <tbody>
+          <tr><td>Par</td>${c.holes.map((h,i)=>`<td class="num"><input data-c="${c.id}" data-i="${i}" data-k="par" type="number" value="${h.par}" style="width:42px;padding:4px"></td>`).join("")}</tr>
+          <tr><td>Yds</td>${c.holes.map((h,i)=>`<td class="num"><input data-c="${c.id}" data-i="${i}" data-k="yds" type="number" value="${h.yds||0}" style="width:48px;padding:4px"></td>`).join("")}</tr>
+        </tbody></table></div>
+      <div class="btnrow" style="margin-top:8px"><button class="btn secondary small editname" data-id="${c.id}">Rename</button>
+        <button class="btn danger small delcourse" data-id="${c.id}">Delete</button></div>
+    </details>`;
+  }).join("");
+  el.querySelectorAll('input[data-c]').forEach(inp=>{
+    inp.onchange=()=>{
+      const c=courses.find(x=>String(x.id)===inp.dataset.c); if(!c) return;
+      const i=+inp.dataset.i, k=inp.dataset.k, v=+inp.value||0;
+      c.holes[i][k]=v; c.par=c.holes.reduce((a,h)=>a+h.par,0);
+      if(c.region==="Ireland") c.verified=true; // user has corrected it
+      saveCourses();
+    };
+  });
+  el.querySelectorAll('.delcourse').forEach(b=>b.onclick=()=>{
+    if(confirm("Delete this course?")){ courses=courses.filter(x=>String(x.id)!==b.dataset.id); saveCourses(); renderData(); }
+  });
+  el.querySelectorAll('.editname').forEach(b=>b.onclick=()=>{
+    const c=courses.find(x=>String(x.id)===b.dataset.id); if(!c) return;
+    const n=prompt("Rename course:",c.name); if(n){ c.name=n; saveCourses(); renderData(); }
+  });
 }
 function exportJSON(){
-  const blob=new Blob([JSON.stringify({rounds,bench},null,2)],{type:"application/json"});
+  const blob=new Blob([JSON.stringify({rounds,bench,courses},null,2)],{type:"application/json"});
   download(blob, `sg-tracker-${new Date().toISOString().slice(0,10)}.json`);
 }
 function importJSON(e){
@@ -723,6 +862,7 @@ function importJSON(e){
   const rd=new FileReader();
   rd.onload=()=>{ try{ const d=JSON.parse(rd.result);
     if(Array.isArray(d.rounds)){ rounds=d.rounds; saveRounds(); }
+    if(Array.isArray(d.courses)){ courses=mergeById(courses,d.courses); saveCourses(); }
     if(d.bench){ bench=d.bench; saveBench(); }
     alert("Imported."); render();
   }catch(err){ alert("Invalid file."); } };
