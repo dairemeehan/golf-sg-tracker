@@ -85,6 +85,11 @@
   .cloudbadge.error{color:var(--bad);border-color:var(--bad)}
   .installbtn{position:absolute;top:12px;right:14px;background:var(--accent);color:#06210f;
     border:none;font-weight:700;padding:7px 12px;border-radius:999px;font-size:13px;cursor:pointer}
+  .profrow{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .profrow label{margin:0;font-size:12px;color:var(--muted)}
+  .profrow select{width:auto;flex:1;max-width:240px;padding:7px 10px;font-size:14px}
+  .profbtn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:10px;padding:7px 10px;font-size:14px;cursor:pointer}
   header{position:sticky}
   a{color:var(--accent)}
 </style>
@@ -94,6 +99,11 @@
   <h1>⛳ Strokes Gained Tracker <span id="cloudBadge" class="cloudbadge off" title="Cloud file sync status">● local only</span></h1>
   <div class="sub">Manual entry · auto-syncs to a cloud file you choose</div>
   <button id="installBtn" class="installbtn" style="display:none">⬇ Install app</button>
+  <div class="profrow">
+    <label for="profileSel">Profile</label>
+    <select id="profileSel"></select>
+    <button id="profMgr" class="profbtn" title="Manage profiles">⚙</button>
+  </div>
 </header>
 <nav id="nav">
   <button data-tab="play" class="active">Play</button>
@@ -181,10 +191,13 @@ const SEED_COURSES = [
   {id:1101,name:"Standard Par 71",region:"Template",par:71,holes:holesFromPars(BASE_PARS[71]),verified:true},
   {id:1102,name:"Standard Par 70",region:"Template",par:70,holes:holesFromPars(BASE_PARS[70]),verified:true}
 ];
-const LS_ROUNDS="sg_rounds_v1", LS_BENCH="sg_bench_v1", LS_DRAFT="sg_draft_v1", LS_COURSES="sg_courses_v1";
+const LS_ROUNDS="sg_rounds_v1", LS_BENCH="sg_bench_v1", LS_DRAFT="sg_draft_v1", LS_COURSES="sg_courses_v1",
+      LS_PROFILES="sg_profiles_v1", LS_ACTIVEPROF="sg_active_profile_v1";
 let bench = loadBench();
 let rounds = loadRounds();
 let courses = loadCourses();
+let profiles = loadProfiles();
+let activeProfileId = loadActiveProfile();
 let draft = loadDraft();   // in-progress round
 let tab = "play";
 
@@ -194,6 +207,27 @@ function saveRounds(){ saveRoundsLocal(); cloudPush(); }
 function loadCourses(){ try{const c=JSON.parse(localStorage.getItem(LS_COURSES)); return (Array.isArray(c)&&c.length)?c:clone(SEED_COURSES);}catch(e){return clone(SEED_COURSES);} }
 function saveCoursesLocal(){ localStorage.setItem(LS_COURSES, JSON.stringify(courses)); }
 function saveCourses(){ saveCoursesLocal(); cloudPush(); }
+function loadProfiles(){
+  try{ const p=JSON.parse(localStorage.getItem(LS_PROFILES));
+    if(Array.isArray(p)&&p.length) return p;
+  }catch(e){}
+  return [{id:1, name:"Me"}];
+}
+function saveProfilesLocal(){ localStorage.setItem(LS_PROFILES, JSON.stringify(profiles)); }
+function saveProfiles(){ saveProfilesLocal(); cloudPush(); }
+function loadActiveProfile(){
+  const v=+localStorage.getItem(LS_ACTIVEPROF);
+  return v||1;
+}
+function saveActiveProfileLocal(){ localStorage.setItem(LS_ACTIVEPROF, String(activeProfileId)); }
+function activeProfile(){ return profiles.find(p=>p.id===activeProfileId)||profiles[0]; }
+function myRounds(){ return rounds.filter(r=>(r.profileId||1)===activeProfileId); }
+// One-time migration: tag any untagged rounds to the first profile.
+function migrateProfiles(){
+  let changed=false;
+  rounds.forEach(r=>{ if(r.profileId==null){ r.profileId=profiles[0].id; changed=true; } });
+  if(changed) saveRoundsLocal();
+}
 function loadBench(){ try{const b=JSON.parse(localStorage.getItem(LS_BENCH)); return b||clone(DEFAULT_BENCH)}catch(e){return clone(DEFAULT_BENCH)} }
 function saveBenchLocal(){ localStorage.setItem(LS_BENCH, JSON.stringify(bench)); }
 function saveBench(){ saveBenchLocal(); cloudPush(); }
@@ -279,7 +313,7 @@ async function cloudWriteNow(){
   if(!cloudHandle) return false;
   if(!(await ensurePerm(cloudHandle))){ setCloud("reconnect"); return false; }
   const w=await cloudHandle.createWritable();
-  await w.write(JSON.stringify({rounds,bench,courses,savedAt:new Date().toISOString()},null,2));
+  await w.write(JSON.stringify({rounds,bench,courses,profiles,activeProfileId,savedAt:new Date().toISOString()},null,2));
   await w.close(); setCloud("on"); return true;
 }
 function cloudPush(){
@@ -295,6 +329,9 @@ async function cloudPull(silent){
     if(txt.trim()){ const d=JSON.parse(txt);
       if(Array.isArray(d.rounds)){ rounds=mergeRounds(rounds,d.rounds); saveRoundsLocal(); }
       if(Array.isArray(d.courses)){ courses=mergeById(courses,d.courses); saveCoursesLocal(); }
+      if(Array.isArray(d.profiles)&&d.profiles.length){ profiles=mergeById(profiles,d.profiles); saveProfilesLocal();
+        if(!profiles.some(p=>p.id===activeProfileId)){ activeProfileId=profiles[0].id; saveActiveProfileLocal(); }
+        renderProfileSelector(); }
       if(d.bench && JSON.stringify(bench)===JSON.stringify(DEFAULT_BENCH)){ bench=d.bench; saveBenchLocal(); }
     }
     if(!silent) render();
@@ -420,6 +457,41 @@ const CAT_TAG={OTT:"ott",APP:"app",ARG:"arg",PUTT:"putt"};
 document.querySelectorAll("#nav button").forEach(b=>{
   b.onclick=()=>{ tab=b.dataset.tab; document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("active",x===b)); render(); };
 });
+
+/* ===================== PROFILES ===================== */
+function renderProfileSelector(){
+  const sel=document.getElementById("profileSel"); if(!sel) return;
+  sel.innerHTML=profiles.map(p=>`<option value="${p.id}" ${p.id===activeProfileId?"selected":""}>${esc(p.name)}</option>`).join("");
+  sel.onchange=()=>{ activeProfileId=+sel.value; saveActiveProfileLocal();
+    if(tab==="data"||tab==="help") tab="summary";
+    document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===tab));
+    render(); };
+  const mgr=document.getElementById("profMgr");
+  if(mgr) mgr.onclick=()=>{ tab="data";
+    document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab==="data"));
+    render(); };
+}
+function addProfile(){
+  const name=prompt("New profile name:"); if(!name) return;
+  const id=Date.now();
+  profiles.push({id, name}); saveProfiles();
+  activeProfileId=id; saveActiveProfileLocal();
+  renderProfileSelector(); render();
+}
+function renameProfile(id){
+  const p=profiles.find(x=>x.id===id); if(!p) return;
+  const n=prompt("Rename profile:",p.name); if(n){ p.name=n; saveProfiles(); renderProfileSelector(); render(); }
+}
+function deleteProfile(id){
+  if(profiles.length<=1){ alert("You need at least one profile."); return; }
+  const p=profiles.find(x=>x.id===id); if(!p) return;
+  const n=rounds.filter(r=>(r.profileId||1)===id).length;
+  if(!confirm(`Delete profile "${p.name}"${n?` and its ${n} round(s)`:""}? This cannot be undone.`)) return;
+  rounds=rounds.filter(r=>(r.profileId||1)!==id); saveRoundsLocal();
+  profiles=profiles.filter(x=>x.id!==id); saveProfilesLocal();
+  if(activeProfileId===id){ activeProfileId=profiles[0].id; saveActiveProfileLocal(); }
+  cloudPush(); renderProfileSelector(); render();
+}
 
 function render(){
   if(tab==="play") renderPlay();
@@ -635,15 +707,16 @@ function saveDraftAsCourse(){
 function finishRound(){
   if(!draft.holes.length){ alert("Add at least one hole first."); return; }
   draft.course=$("#rcourse")?.value||draft.course;
-  const r={ id:draft.id, date:draft.date, course:draft.course, courseId:draft.courseId||null, holes:draft.holes };
+  const r={ id:draft.id, date:draft.date, course:draft.course, courseId:draft.courseId||null, profileId:activeProfileId, holes:draft.holes };
   rounds.push(r); saveRounds();
   draft=null; saveDraft();
   tab="summary"; document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab==="summary"));
   render();
 }
 function resumeHistoryHint(){
-  if(!rounds.length) return "";
-  return `<div class="card"><h2>Recent</h2>${rounds.slice(-3).reverse().map(r=>{
+  const mine=myRounds();
+  if(!mine.length) return "";
+  return `<div class="card"><h2>Recent</h2>${mine.slice(-3).reverse().map(r=>{
     const t=roundTotals(r);
     return `<div class="shotline"><span class="desc">${r.date} · ${esc(r.course||"—")}</span>
       <span class="sg ${sgClass(t.total)}">${fmt(t.total)}</span></div>`;}).join("")}</div>`;
@@ -651,10 +724,11 @@ function resumeHistoryHint(){
 
 /* ===================== SUMMARY TAB ===================== */
 function renderSummary(){
-  if(!rounds.length){ main.innerHTML=`<div class="card"><h2>No data yet</h2><div class="hint">Log a round in the <b>Play</b> tab to see your strokes-gained breakdown.</div></div>`; return; }
+  const mine=myRounds();
+  if(!mine.length){ main.innerHTML=`<div class="card"><h2>No data yet for ${esc(activeProfile().name)}</h2><div class="hint">Log a round in the <b>Play</b> tab to see your strokes-gained breakdown.</div></div>`; return; }
   // aggregate over all rounds, per 18-hole normalized? Show per-round average.
   const agg={OTT:0,APP:0,ARG:0,PUTT:0,total:0,holes:0,strokes:0,par:0};
-  rounds.forEach(r=>{ const t=roundTotals(r);
+  mine.forEach(r=>{ const t=roundTotals(r);
     ["OTT","APP","ARG","PUTT","total"].forEach(k=>agg[k]+=t[k]);
     agg.holes+=t.holes; agg.strokes+=t.strokes; agg.par+=t.par; });
   const per18=h=>agg.holes? (h/agg.holes*18):0;
@@ -665,7 +739,7 @@ function renderSummary(){
 
   main.innerHTML=`
   <div class="card">
-    <h2>Strokes gained vs PGA Tour <span class="muted" style="font-weight:400">(per 18, avg of ${rounds.length} round${rounds.length>1?"s":""})</span></h2>
+    <h2>Strokes gained vs PGA Tour <span class="muted" style="font-weight:400">(per 18, avg of ${mine.length} round${mine.length>1?"s":""})</span></h2>
     <div class="statgrid">
       <div class="stat"><div class="k">Total SG / 18</div><div class="v ${sgClass(per18(agg.total))}">${fmt(per18(agg.total))}</div></div>
       <div class="stat"><div class="k">Avg score vs par</div><div class="v">${agg.holes?fmt((agg.strokes-agg.par)/agg.holes*18,1):"—"}</div></div>
@@ -702,10 +776,11 @@ function focusAdvice(c){
 
 /* ===================== HISTORY TAB ===================== */
 function renderHistory(){
-  if(!rounds.length){ main.innerHTML=`<div class="card"><h2>No rounds yet</h2></div>`; return; }
+  const mine=myRounds();
+  if(!mine.length){ main.innerHTML=`<div class="card"><h2>No rounds yet for ${esc(activeProfile().name)}</h2></div>`; return; }
   let html=`<div class="card"><h2>Rounds</h2>
     <table><thead><tr><th>Date</th><th>Course</th><th class="num">Holes</th><th class="num">+/-</th><th class="num">SG</th></tr></thead><tbody>`;
-  rounds.slice().reverse().forEach(r=>{ const t=roundTotals(r);
+  mine.slice().reverse().forEach(r=>{ const t=roundTotals(r);
     html+=`<tr data-id="${r.id}" class="rrow" style="cursor:pointer">
       <td>${r.date}</td><td>${esc(r.course||"—")}</td><td class="num">${t.holes}</td>
       <td class="num">${t.strokes-t.par>=0?"+":""}${t.strokes-t.par}</td>
@@ -766,6 +841,12 @@ function renderData(){
     <div class="hint" style="margin-top:8px"><b>How multi-device works:</b> all devices read/write the same synced file. New rounds merge together by ID. Note: <i>deletions don't propagate across devices</i> (a round deleted on one device may return from another's copy) — by design, to avoid accidental data loss.</div>
   </div>
   <div class="card">
+    <h2>👤 Profiles</h2>
+    <div class="hint">Each profile tracks its own rounds and strokes-gained progress. Switch the active profile from the selector at the top.</div>
+    <div id="profileList" style="margin-top:8px"></div>
+    <div class="btnrow"><button class="btn secondary small" id="addprofile">＋ Add profile</button></div>
+  </div>
+  <div class="card">
     <h2>⛳ Course library</h2>
     <div class="hint">Pick a course when starting a round to auto-fill every hole. Edit a course below, or use “Save as course” mid-round to capture your exact layout.</div>
     <div id="courseList" style="margin-top:8px"></div>
@@ -790,7 +871,8 @@ function renderData(){
   </div>
   <div class="card">
     <h2>Danger zone</h2>
-    <div class="btnrow"><button class="btn danger" id="wipe">Delete ALL rounds</button></div>
+    <div class="hint">Deletes rounds only for the active profile.</div>
+    <div class="btnrow"><button class="btn danger" id="wipe">Delete this profile's rounds</button></div>
   </div>`;
   if($("#cloudconnect")) $("#cloudconnect").onclick=cloudConnect;
   if($("#cloudpull")) $("#cloudpull").onclick=async()=>{ await cloudPull(false); alert("Loaded latest from file."); };
@@ -802,8 +884,12 @@ function renderData(){
   $("#importfile").onchange=importJSON;
   $("#csv").onclick=exportCSV;
   $("#resetbench").onclick=()=>{ if(confirm("Reset benchmark tables to defaults?")){ bench=clone(DEFAULT_BENCH); saveBench(); alert("Reset done."); } };
-  $("#wipe").onclick=()=>{ if(confirm("Delete ALL saved rounds? This cannot be undone.")){ rounds=[]; saveRounds(); alert("Deleted."); render(); } };
+  $("#wipe").onclick=()=>{ const nm=activeProfile().name;
+    if(confirm(`Delete all rounds for "${nm}"? This cannot be undone.`)){
+      rounds=rounds.filter(r=>(r.profileId||1)!==activeProfileId); saveRounds(); alert("Deleted."); render(); } };
   renderCourseList();
+  renderProfileList();
+  if($("#addprofile")) $("#addprofile").onclick=addProfile;
   if($("#addcourse")) $("#addcourse").onclick=()=>{
     const name=prompt("New course name:"); if(!name) return;
     courses.push({id:Date.now(), name, region:"Mine", verified:true, par:72, holes:holesFromPars(BASE_PARS[72])});
@@ -853,17 +939,35 @@ function renderCourseList(){
     const n=prompt("Rename course:",c.name); if(n){ c.name=n; saveCourses(); renderData(); }
   });
 }
+function renderProfileList(){
+  const el=$("#profileList"); if(!el) return;
+  el.innerHTML=profiles.map(p=>{
+    const n=rounds.filter(r=>(r.profileId||1)===p.id).length;
+    const active=p.id===activeProfileId;
+    return `<div class="shotline">
+      <span class="desc">${active?"● ":""}${esc(p.name)} <span class="muted">· ${n} round${n===1?"":"s"}</span></span>
+      <span>
+        <button class="btn secondary small renameprof" data-id="${p.id}">Rename</button>
+        <button class="btn danger small delprof" data-id="${p.id}"${profiles.length<=1?" disabled":""}>Delete</button>
+      </span></div>`;
+  }).join("");
+  el.querySelectorAll('.renameprof').forEach(b=>b.onclick=()=>renameProfile(+b.dataset.id));
+  el.querySelectorAll('.delprof').forEach(b=>b.onclick=()=>deleteProfile(+b.dataset.id));
+}
 function exportJSON(){
-  const blob=new Blob([JSON.stringify({rounds,bench,courses},null,2)],{type:"application/json"});
+  const blob=new Blob([JSON.stringify({rounds,bench,courses,profiles,activeProfileId},null,2)],{type:"application/json"});
   download(blob, `sg-tracker-${new Date().toISOString().slice(0,10)}.json`);
 }
 function importJSON(e){
   const f=e.target.files[0]; if(!f) return;
   const rd=new FileReader();
   rd.onload=()=>{ try{ const d=JSON.parse(rd.result);
-    if(Array.isArray(d.rounds)){ rounds=d.rounds; saveRounds(); }
+    if(Array.isArray(d.profiles)&&d.profiles.length){ profiles=mergeById(profiles,d.profiles); saveProfiles();
+      if(!profiles.some(p=>p.id===activeProfileId)){ activeProfileId=profiles[0].id; saveActiveProfileLocal(); } }
+    if(Array.isArray(d.rounds)){ rounds=d.rounds; migrateProfiles(); saveRounds(); }
     if(Array.isArray(d.courses)){ courses=mergeById(courses,d.courses); saveCourses(); }
     if(d.bench){ bench=d.bench; saveBench(); }
+    renderProfileSelector();
     alert("Imported."); render();
   }catch(err){ alert("Invalid file."); } };
   rd.readAsText(f);
@@ -923,6 +1027,8 @@ function renderHelp(){
 /* ===================== UTIL ===================== */
 function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
+migrateProfiles();
+renderProfileSelector();
 render();
 updateCloudBadge();
 cloudInit();
